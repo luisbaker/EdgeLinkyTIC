@@ -9,6 +9,8 @@ components:
     version: 1
   - id: powerConsumptionReport
     version: 1
+  - id: powerMeter
+    version: 1
   - id: currentMeasurement
     version: 1
   - id: voltageMeasurement
@@ -57,4 +59,6 @@ components:
   - id: "stormachieve25639.linkySerial"
     version: 1
   - id: "stormachieve25639.linkyPoweringModule"
+    version: 1
+  - id: signalStrength
     version: 1

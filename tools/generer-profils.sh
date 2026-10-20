@@ -34,6 +34,8 @@ for phases in mono tri; do
         echo "    version: 1"
         echo "  - id: powerConsumptionReport"
         echo "    version: 1"
+        echo "  - id: powerMeter"
+        echo "    version: 1"
         if [ "$phases" = mono ]; then
           echo "  - id: currentMeasurement"
           echo "    version: 1"
@@ -85,6 +87,8 @@ for phases in mono tri; do
         echo "  - id: \"stormachieve25639.linkySerial\""
         echo "    version: 1"
         echo "  - id: \"stormachieve25639.linkyPoweringModule\""
+        echo "    version: 1"
+        echo "  - id: signalStrength"
         echo "    version: 1"
       } > "$f"
     done

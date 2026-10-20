@@ -18,11 +18,13 @@ Fork maintenu de [sdalu/EdgeLinkyTIC](https://github.com/sdalu/EdgeLinkyTIC). Le
 | Puissance souscrite (kVA) | ISOUSC × 200 VA | PREF | `main` |
 | Option tarifaire | OPTARIF | NGTF | `main` |
 | Production : énergie injectée et puissance | — | EAIT, SINSTI | `production` |
+| Puissance active moyenne (W, `powerMeter`) | — | CCASN | `main` |
+| Qualité du signal Zigbee (LQI, RSSI) | ✓ | ✓ | `linky` |
 | Mode, numéro de série, tension du module | ✓ | ✓ | `linky` |
 
 Le driver lit le mode du Linky (attribut `0xFF66/0x0300`) et le nombre d'index utilisés, puis bascule automatiquement sur le profil adapté (monophasé ou triphasé, 1, 2, 6 ou 10 index, avec ou sans production).
 
-La puissance affichée est une puissance **apparente** (VA), et non une puissance active (W) : c'est ce que fournit le Linky.
+La puissance instantanée est une puissance **apparente** (VA). La seule puissance active (W) disponible, CCASN, est une moyenne sur la période de la courbe de charge du Linky : elle n'est pas instantanée.
 
 ## Installation
 

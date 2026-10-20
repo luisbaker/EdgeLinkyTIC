@@ -18,4 +18,6 @@
 - Capacités standard SmartThings `currentMeasurement`, `voltageMeasurement` et `powerConsumptionReport` (SmartThings Energy), utilisables dans les automatisations.
 - Choix automatique du profil selon le mode du Linky et le nombre d'index.
 - Empreinte pour les firmwares qui envoient « ZLinky_TIC » suivi d'un caractère nul.
+- Puissance active moyenne (CCASN, mode standard) via la capacité standard `powerMeter`.
+- Qualité du signal Zigbee (LQI, RSSI) via `signalStrength`, publiée au plus toutes les 5 minutes.
 - Tests de la logique pure (`tests/test_logique.lua`).

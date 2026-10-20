@@ -78,6 +78,11 @@ r = logic.consumption_report(1000 + 900, 10, 1000, 5000)
 check("index en baisse : delta nul", r.delta_wh, 0)
 check("énergie absente", logic.consumption_report(1000, nil, nil, nil), nil)
 
+-- should_emit_signal
+check("signal : premier message", logic.should_emit_signal(100, nil), true)
+check("signal : trop tôt", logic.should_emit_signal(100 + 60, 100), false)
+check("signal : après 5 min", logic.should_emit_signal(100 + 300, 100), true)
+
 -- clean_string
 check("bourrage", logic.clean_string("HC..\0\0  "), "HC..")
 check("non chaîne", logic.clean_string(nil), nil)

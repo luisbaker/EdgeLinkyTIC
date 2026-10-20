@@ -115,6 +115,7 @@ local function read_all(device)
   local info = mode_info(device)
   if info and info.standard then
     table.insert(list, { CLUSTER_ELECTRICAL, 0x0505 })
+    table.insert(list, { CLUSTER_ELECTRICAL, 0x050B })
   end
   if info and info.tri then
     table.insert(list, { CLUSTER_ELECTRICAL, 0x0908 })
@@ -166,6 +167,7 @@ local function reportable_attributes(info, index_slots)
   end
   if info.standard then
     table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0505, data_types.Uint16, 60, 900, 1))
+    table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x050B, data_types.Int16, 60, 900, 1))
     if info.tri then
       table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0905, data_types.Uint16, 60, 900, 1))
       table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0A05, data_types.Uint16, 60, 900, 1))
@@ -326,6 +328,16 @@ local function total_apparent_power(driver, device, value, zb_rx)
   end
 end
 
+-- 0x050B : CCASN, point courant de la courbe de charge active soutirée (W),
+-- mode standard uniquement. C'est une puissance active moyenne sur la période
+-- de la courbe de charge, et non une mesure instantanée.
+local function active_power_handler(driver, device, value, zb_rx)
+  local info = mode_info(device)
+  if not (info and info.standard) then return end
+  if type(value.value) ~= "number" or value.value < 0 then return end
+  emit_to(device, "main", capabilities.powerMeter.power({ value = value.value, unit = "W" }))
+end
+
 local function injected_power_handler(driver, device, value, zb_rx)
   if not logic.is_valid_measure(value.value) then return end
   emit_to(device, "production", c_instantaneous.power({ value = value.value, unit = "VA" }))
@@ -429,6 +441,8 @@ local zigbee_zlinky_template = {
     capabilities.refresh,
     capabilities.energyMeter,
     capabilities.powerConsumptionReport,
+    capabilities.powerMeter,
+    capabilities.signalStrength,
     capabilities.currentMeasurement,
     capabilities.voltageMeasurement,
   },
@@ -454,6 +468,7 @@ local zigbee_zlinky_template = {
         [0x0505] = voltage_handler(1),       -- URMS1
         [0x0905] = voltage_handler(2),       -- URMS2
         [0x0A05] = voltage_handler(3),       -- URMS3
+        [0x050B] = active_power_handler,     -- CCASN
         [0x0508] = current_handler(1),       -- IINST / IINST1 / IRMS1
         [0x0908] = current_handler(2),       -- IINST2 / IRMS2
         [0x0A08] = current_handler(3),       -- IINST3 / IRMS3
@@ -477,6 +492,26 @@ local zigbee_zlinky_template = {
     doConfigure = do_configure,
   },
 }
+
+-- Qualité du signal : publiée à partir de n'importe quel message reçu.
+local last_signal = {}
+local function emit_signal(device, zb_rx)
+  local now = os.time()
+  if not logic.should_emit_signal(now, last_signal[device.id]) then return end
+  if zb_rx.lqi == nil or zb_rx.rssi == nil then return end
+  last_signal[device.id] = now
+  emit_to(device, "linky", capabilities.signalStrength.lqi(zb_rx.lqi.value))
+  emit_to(device, "linky", capabilities.signalStrength.rssi({ value = zb_rx.rssi.value, unit = "dBm" }))
+end
+
+for _, cluster_handlers in pairs(zigbee_zlinky_template.zigbee_handlers.attr) do
+  for attribute, handler in pairs(cluster_handlers) do
+    cluster_handlers[attribute] = function(driver, device, value, zb_rx)
+      emit_signal(device, zb_rx)
+      handler(driver, device, value, zb_rx)
+    end
+  end
+end
 
 local zigbee_zlinky = ZigbeeDriver("zigbee_zlinky", zigbee_zlinky_template)
 zigbee_zlinky:run()

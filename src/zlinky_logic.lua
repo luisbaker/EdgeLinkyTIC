@@ -118,6 +118,14 @@ function M.consumption_report(now, energy_wh, last_time, last_energy_wh)
   }
 end
 
+-- Qualité du signal Zigbee : chaque message reçu la porte, mais on ne la
+-- publie qu'au plus toutes les 5 minutes pour ne pas inonder l'historique.
+M.SIGNAL_INTERVAL_S = 5 * 60
+
+function M.should_emit_signal(now, last_time)
+  return last_time == nil or now - last_time >= M.SIGNAL_INTERVAL_S
+end
+
 -- Nettoie les chaînes TIC (bourrage par espaces ou caractères nuls).
 function M.clean_string(s)
   if type(s) ~= "string" then
