@@ -15,35 +15,35 @@
 		"alternatives": [
 		    {
 			"key": 0,
-			"value": "Historique monophasé",
+			"value": "Historique monophasé"
 		    },
 		    {
 			"key": 1,
-			"value": "Standard monophasé",
+			"value": "Standard monophasé"
 		    },
 		    {
 			"key": 2,
-			"value": "Historique triphasé",
+			"value": "Historique triphasé"
 		    },
 		    {
 			"key": 3,
-			"value": "Standard triphasé",
+			"value": "Standard triphasé"
 		    },
 		    {
 			"key": 4,
-			"value": "Unknown",
+			"value": "Inconnu"
 		    },
 		    {
 			"key": 5,
-			"value": "Standard monophasé producteur",
+			"value": "Standard monophasé producteur"
 		    },
 		    {
 			"key": 6,
-			"value": "Unknown",
+			"value": "Inconnu"
 		    },
 		    {
 			"key": 7,
-			"value": "Standard triphasé producteur",
+			"value": "Standard triphasé producteur"
 		    }
 		]
 	    }

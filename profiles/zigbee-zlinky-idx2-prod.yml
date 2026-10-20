@@ -1,0 +1,47 @@
+# Fichier généré par tools/generer-profils.sh : ne pas modifier à la main.
+name: zigbee-zlinky-idx2-prod
+components:
+- id: main
+  capabilities:
+  - id: refresh
+    version: 1
+  - id: energyMeter
+    version: 1
+  - id: powerConsumptionReport
+    version: 1
+  - id: currentMeasurement
+    version: 1
+  - id: voltageMeasurement
+    version: 1
+  - id: "stormachieve25639.instantaneous"
+    version: 1
+  - id: "stormachieve25639.subscription"
+    version: 1
+  categories:
+  - name: CurbPowerMeter
+- id: index1
+  label: "Index 1"
+  capabilities:
+  - id: energyMeter
+    version: 1
+- id: index2
+  label: "Index 2"
+  capabilities:
+  - id: energyMeter
+    version: 1
+- id: production
+  label: "Production"
+  capabilities:
+  - id: energyMeter
+    version: 1
+  - id: "stormachieve25639.instantaneous"
+    version: 1
+- id: linky
+  label: "Linky"
+  capabilities:
+  - id: "stormachieve25639.linkyMode"
+    version: 1
+  - id: "stormachieve25639.linkySerial"
+    version: 1
+  - id: "stormachieve25639.linkyPoweringModule"
+    version: 1

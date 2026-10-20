@@ -1,13 +1,18 @@
--- https://zigbeealliance.org/wp-content/uploads/2019/12/07-5123-06-zigbee-cluster-library-specification.pdf
+-- SmartThings Edge driver pour le module ZLinky TIC de LiXee.
+--
+-- Référence des attributs :
+--   https://github.com/fairecasoimeme/Zlinky_TIC#clusters
+-- ZCL :
+--   https://zigbeealliance.org/wp-content/uploads/2019/12/07-5123-06-zigbee-cluster-library-specification.pdf
 
 local capabilities = require "st.capabilities"
 local ZigbeeDriver = require "st.zigbee"
-local defaults     = require "st.zigbee.defaults"
 local clusters     = require "st.zigbee.zcl.clusters"
 local cluster_base = require "st.zigbee.cluster_base"
 local data_types   = require "st.zigbee.data_types"
-local constants    = require "st.zigbee.constants"
 local log          = require "log"
+
+local logic        = require "zlinky_logic"
 
 local c_linkyPoweringModule = capabilities["stormachieve25639.linkyPoweringModule"]
 local c_linkyMode           = capabilities["stormachieve25639.linkyMode"]
@@ -15,297 +20,463 @@ local c_linkySerial         = capabilities["stormachieve25639.linkySerial"]
 local c_subscription        = capabilities["stormachieve25639.subscription"]
 local c_instantaneous       = capabilities["stormachieve25639.instantaneous"]
 
+local CLUSTER_METERING    = clusters.SimpleMetering.ID          -- 0x0702
+local CLUSTER_METER_ID    = 0x0B01                              -- Meter Identification
+local CLUSTER_ELECTRICAL  = clusters.ElectricalMeasurement.ID   -- 0x0B04
+local CLUSTER_LIXEE       = 0xFF66                              -- LiXee privé
+local CLUSTER_POWER_CFG   = clusters.PowerConfiguration.ID      -- 0x0001
+local ATTR_MAINS_VOLTAGE  = clusters.PowerConfiguration.attributes.MainsVoltage
 
+-- Index tarifaires : 0x0702 / 0x0100, 0x0102, … 0x0112 (index 1 à 10).
+local TIER_COUNT = 10
+local function tier_attribute(i) return 0x0100 + 2 * (i - 1) end
 
--- read-only
+-- Champs persistants
+local F_MODE          = "linky_mode"          -- valeur brute de 0xFF66/0x0300
+local F_HIGHEST_INDEX = "highest_index"       -- plus haut index tarifaire non nul vu
+local F_PROFILE       = "profile_name"        -- dernier profil demandé
+local F_CONFIGURED    = "configured_for"      -- profil pour lequel les rapports sont configurés
+local F_RAW_POWER     = "subscribed_raw"      -- ISOUSC/PREF brut
+local F_TOTAL         = "total_wh"
+local F_TIERS         = "tiers_wh"            -- clés "t1"…"t10" (sérialisation JSON stable)
+local F_REPORT_T      = "report_time"
+local F_REPORT_E      = "report_energy_wh"
 
-local default_mode_configuration = {
-  cluster           = 0xFF66,
-  attribute         = 0x0300,
-  data_type         = data_types.Uint8,
+local POLL_INTERVAL_S = 3600   -- attributs en lecture seule (mode, tarif, abonnement…)
+local READ_SPACING_S  = 1      -- le ZLinky est alimenté par le Linky : on espace les lectures
+
+local PERSIST = { persist = true }
+
+------------------------------------------------------------------------------
+-- Outils
+------------------------------------------------------------------------------
+
+local function mode_info(device)
+  return logic.decode_mode(device:get_field(F_MODE))
+end
+
+local function emit_to(device, component_id, event)
+  local component = device.profile.components[component_id]
+  if component == nil then
+    -- Le profil n'a pas (encore) ce composant, par ex. avant la détection du triphasé.
+    log.debug(string.format("[%s] composant %s absent du profil, événement ignoré", device.id, component_id))
+    return
+  end
+  device:emit_component_event(component, event)
+end
+
+-- Composant recevant les mesures d'une phase : « phaseN » en triphasé,
+-- « main » pour la phase 1 en monophasé.
+local function phase_component(device, phase)
+  if device.profile.components["phase" .. phase] ~= nil then
+    return "phase" .. phase
+  end
+  if phase == 1 then
+    return "main"
+  end
+  return nil
+end
+
+local function iso8601(t)
+  return os.date("!%Y-%m-%dT%H:%M:%SZ", t)
+end
+
+local function read(device, cluster, attribute)
+  device:send(cluster_base.read_attribute(device,
+                                          data_types.ClusterId(cluster),
+                                          data_types.AttributeId(attribute)))
+end
+
+-- Lectures espacées pour ne pas saturer le module.
+local function read_spaced(device, list)
+  for i, item in ipairs(list) do
+    device.thread:call_with_delay((i - 1) * READ_SPACING_S, function()
+      read(device, item[1], item[2])
+    end)
+  end
+end
+
+local READ_ONLY_ATTRIBUTES = {
+  { CLUSTER_LIXEE,    0x0300 },  -- mode Linky
+  { CLUSTER_LIXEE,    0x0000 },  -- OPTARIF / NGTF
+  { CLUSTER_METERING, 0x0308 },  -- ADCO / ADSC
+  { CLUSTER_METER_ID, 0x000D },  -- ISOUSC / PREF
 }
 
-local default_ADC0_ADSC_configuration = {
-  cluster           = clusters.SimpleMetering.ID,
-  attribute         = 0x0308,
-  data_type         = data_types.String,
-}
+local function read_all(device)
+  local list = {}
+  for _, a in ipairs(READ_ONLY_ATTRIBUTES) do table.insert(list, a) end
+  table.insert(list, { CLUSTER_POWER_CFG, ATTR_MAINS_VOLTAGE.ID })
+  table.insert(list, { CLUSTER_METERING, 0x0000 })
+  -- Tous les index sont lus pour détecter combien le contrat en utilise.
+  for i = 1, TIER_COUNT do table.insert(list, { CLUSTER_METERING, tier_attribute(i) }) end
+  table.insert(list, { CLUSTER_ELECTRICAL, 0x0508 })
+  table.insert(list, { CLUSTER_ELECTRICAL, 0x050F })
+  local info = mode_info(device)
+  if info and info.standard then
+    table.insert(list, { CLUSTER_ELECTRICAL, 0x0505 })
+  end
+  if info and info.tri then
+    table.insert(list, { CLUSTER_ELECTRICAL, 0x0908 })
+    table.insert(list, { CLUSTER_ELECTRICAL, 0x0A08 })
+  end
+  if info and info.production then
+    table.insert(list, { CLUSTER_METERING, 0x0001 })
+    table.insert(list, { CLUSTER_LIXEE, 0x0207 })
+  end
+  read_spaced(device, list)
+end
 
-local default_OPTARIF_NGTF_configuration = {
-  cluster           = 0xFF66,
-  attribute         = 0x0000,
-  data_type         = data_types.String,
-}
+------------------------------------------------------------------------------
+-- Rapports configurés selon le mode du compteur
+------------------------------------------------------------------------------
 
-local default_ISOUSC_PREF_configuration = {
-  cluster           = 0x0B01,
-  attribute         = 0x000D,
-  data_type         = data_types.Uint16,
-}
+local function reportable(cluster, attribute, data_type, min, max, change)
+  return {
+    cluster           = cluster,
+    attribute         = attribute,
+    data_type         = data_type,
+    minimum_interval  = min,
+    maximum_interval  = max,
+    reportable_change = change,
+  }
+end
 
+-- Intervalles : 30 s / 60 s pour les mesures déjà présentes dans les versions
+-- précédentes du driver (comportement conservé), 60 s / 900 s pour les nouvelles
+-- (valeurs reprises de zigbee2mqtt, pour ménager l'alimentation du module).
+-- Les attributs en lecture seule (mode, tarif, série, ISOUSC/PREF) ne sont
+-- plus configurés en rapport : ils sont lus périodiquement (voir poll).
+local function reportable_attributes(info, index_slots)
+  local list = {
+    reportable(CLUSTER_POWER_CFG, ATTR_MAINS_VOLTAGE.ID, ATTR_MAINS_VOLTAGE.base_type, 30, 21600, 1),
+    reportable(CLUSTER_METERING, 0x0000, data_types.Uint48, 30, 60, 1),
+    reportable(CLUSTER_ELECTRICAL, 0x0508, data_types.Uint16, 30, 60, 1),
+    reportable(CLUSTER_ELECTRICAL, 0x050F, data_types.Uint16, 30, 60, 1),
+  }
+  for i = 1, (index_slots or 1) do
+    table.insert(list, reportable(CLUSTER_METERING, tier_attribute(i), data_types.Uint48, 60, 900, 1))
+  end
+  if info == nil then
+    return list
+  end
+  if info.tri then
+    table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0908, data_types.Uint16, 30, 60, 1))
+    table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0A08, data_types.Uint16, 30, 60, 1))
+  end
+  if info.standard then
+    table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0505, data_types.Uint16, 60, 900, 1))
+    if info.tri then
+      table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0905, data_types.Uint16, 60, 900, 1))
+      table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0A05, data_types.Uint16, 60, 900, 1))
+      table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x090F, data_types.Uint16, 30, 60, 1))
+      table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0A0F, data_types.Uint16, 30, 60, 1))
+      -- SINSTS total en triphasé. Type à confirmer sur un vrai module (cf. changelog v0016).
+      table.insert(list, reportable(CLUSTER_ELECTRICAL, 0x0306, data_types.Uint16, 30, 60, 1))
+    end
+  end
+  if info.production then
+    table.insert(list, reportable(CLUSTER_METERING, 0x0001, data_types.Uint48, 60, 900, 1))
+    table.insert(list, reportable(CLUSTER_LIXEE, 0x0207, data_types.Uint16, 30, 60, 1))
+  end
+  return list
+end
 
--- Reportable
+-- Enregistre les rapports attendus et renvoie le nom du profil correspondant.
+local function register_reporting(device)
+  local info = mode_info(device)
+  local slots = logic.index_slots(device:get_field(F_HIGHEST_INDEX))
+  for _, config in ipairs(reportable_attributes(info, slots)) do
+    device:add_configured_attribute(config)
+    device:add_monitored_attribute(config)
+  end
+  return logic.profile_name(info, slots)
+end
 
-local default_voltage_configuration = {
-  cluster           = clusters.PowerConfiguration.ID,
-  attribute         = clusters.PowerConfiguration.attributes.MainsVoltage.ID,
-  minimum_interval  = 30,
-  maximum_interval  = 21600,
-  data_type         = clusters.PowerConfiguration.attributes.MainsVoltage.base_type,
-  reportable_change = 1
-}
+-- Applique le profil adapté au compteur et (re)configure les rapports si besoin.
+local function update_profile(device)
+  local wanted = register_reporting(device)
+  if device:get_field(F_PROFILE) ~= wanted then
+    log.info(string.format("[%s] profil %s", device.id, wanted))
+    device:try_update_metadata({ profile = wanted })
+    device:set_field(F_PROFILE, wanted, PERSIST)
+  end
+  if device:get_field(F_CONFIGURED) ~= wanted then
+    device:configure()
+    device:set_field(F_CONFIGURED, wanted, PERSIST)
+  end
+end
 
-local default_index_0000_configuration = {
-  cluster           = clusters.SimpleMetering.ID,
-  attribute         = clusters.SimpleMetering.attributes.CurrentSummationDelivered.ID,
-  minimum_interval  = 30,
-  maximum_interval  = 60,
-  data_type         = clusters.SimpleMetering.attributes.CurrentSummationDelivered.base_type,
-  reportable_change = 1
-}
+------------------------------------------------------------------------------
+-- Énergie
+------------------------------------------------------------------------------
 
-local default_PAPP_SINST_SINST1_configuration = {
-  cluster           = clusters.ElectricalMeasurement.ID,
-  attribute         = clusters.ElectricalMeasurement.attributes.ApparentPower.ID,
-  minimum_interval  = 30,
-  maximum_interval  = 60,
-  data_type         = clusters.ElectricalMeasurement.attributes.ApparentPower.base_type,
-  reportable_change = 1
-}
+local function report_consumption(device, energy_wh)
+  local report = logic.consumption_report(os.time(), energy_wh,
+                                          device:get_field(F_REPORT_T),
+                                          device:get_field(F_REPORT_E))
+  if report == nil then
+    return
+  end
+  emit_to(device, "main", capabilities.powerConsumptionReport.powerConsumption({
+    start       = iso8601(report.start),
+    ["end"]     = iso8601(report.finish),
+    deltaEnergy = report.delta_wh,
+    energy      = report.energy_wh,
+  }))
+  device:set_field(F_REPORT_T, report.finish, PERSIST)
+  device:set_field(F_REPORT_E, report.energy_wh, PERSIST)
+end
 
-local default_IINST_configuration = {
-  cluster           = clusters.ElectricalMeasurement.ID,
-  attribute         = clusters.ElectricalMeasurement.attributes.RMSCurrent.ID,
-  minimum_interval  = 30,
-  maximum_interval  = 60,
-  data_type         = clusters.ElectricalMeasurement.attributes.RMSCurrent.base_type,
-  reportable_change = 1
-}
+local function emit_total_energy(device)
+  local energy_wh = logic.total_energy_wh(device:get_field(F_TOTAL), device:get_field(F_TIERS))
+  if energy_wh == nil then
+    return
+  end
+  emit_to(device, "main", capabilities.energyMeter.energy({ value = energy_wh / 1000, unit = "kWh" }))
+  report_consumption(device, energy_wh)
+end
 
+local function total_handler(driver, device, value, zb_rx)
+  device:set_field(F_TOTAL, value.value, PERSIST)
+  emit_total_energy(device)
+end
 
+local function tier_handler(index)
+  return function(driver, device, value, zb_rx)
+    local tiers = device:get_field(F_TIERS) or {}
+    tiers["t" .. index] = value.value
+    device:set_field(F_TIERS, tiers, PERSIST)
 
+    emit_to(device, "index" .. index, capabilities.energyMeter.energy({ value = value.value / 1000, unit = "kWh" }))
 
+    if value.value > 0 and index > (device:get_field(F_HIGHEST_INDEX) or 0) then
+      device:set_field(F_HIGHEST_INDEX, index, PERSIST)
+      if device:get_field(F_MODE) ~= nil then
+        update_profile(device)
+      end
+    end
 
+    local total = device:get_field(F_TOTAL)
+    if total == nil or total == 0 then
+      emit_total_energy(device)
+    end
+  end
+end
 
+local function injected_energy_handler(driver, device, value, zb_rx)
+  emit_to(device, "production", capabilities.energyMeter.energy({ value = value.value / 1000, unit = "kWh" }))
+end
 
-local device_init = function(self, device)
-   log.info("[" .. device.id .. "] Initializing ZLinky device")
+------------------------------------------------------------------------------
+-- Mesures instantanées
+------------------------------------------------------------------------------
 
-   device:set_field(constants.SIMPLE_METERING_DIVISOR_KEY, 1000, {persist = true})
+local function current_handler(phase)
+  return function(driver, device, value, zb_rx)
+    if not logic.is_valid_measure(value.value) then return end
+    local component = phase_component(device, phase)
+    if component == nil then return end
+    emit_to(device, component, capabilities.currentMeasurement.current({ value = value.value, unit = "A" }))
+    -- Compatibilité : la capacité Instantaneous reste alimentée sur « main ».
+    if component == "main" then
+      emit_to(device, "main", c_instantaneous.current({ value = value.value, unit = "A" }))
+    end
+  end
+end
 
-   -- read-only
-   device:add_configured_attribute(default_mode_configuration)
-   device:add_configured_attribute(default_ADC0_ADSC_configuration)
-   device:add_configured_attribute(default_OPTARIF_NGTF_configuration)
-   device:add_configured_attribute(default_ISOUSC_PREF_configuration)
+-- URMS1..3 : mode standard uniquement.
+local function voltage_handler(phase)
+  return function(driver, device, value, zb_rx)
+    if not logic.is_valid_measure(value.value) then return end
+    local component = phase_component(device, phase)
+    if component == nil then return end
+    emit_to(device, component, capabilities.voltageMeasurement.voltage({ value = value.value, unit = "V" }))
+    if component == "main" then
+      emit_to(device, "main", c_instantaneous.voltage({ value = value.value, unit = "V" }))
+    end
+  end
+end
 
-   -- reportable
-   device:add_configured_attribute(default_index_0000_configuration)
-   device:add_monitored_attribute(default_index_0000_configuration)
-   
-   device:add_configured_attribute(default_IINST_configuration)
-   device:add_monitored_attribute(default_IINST_configuration)
-   
-   device:add_configured_attribute(default_PAPP_SINST_SINST1_configuration)
-   device:add_monitored_attribute(default_PAPP_SINST_SINST1_configuration)
-  
-   device:add_configured_attribute(default_voltage_configuration)
-   device:add_monitored_attribute(default_voltage_configuration)
+-- 0x050F : PAPP (historique, total) / SINSTS (standard monophasé) / SINSTS1 (standard triphasé).
+local function apparent_power_050F(driver, device, value, zb_rx)
+  if not logic.is_valid_measure(value.value) then return end
+  local info = mode_info(device)
+  local component = "main"
+  if info and info.standard and info.tri then
+    component = "phase1"
+  end
+  emit_to(device, component, c_instantaneous.power({ value = value.value, unit = "VA" }))
+end
 
-  -- mark device as online so it can be controlled from the app
+local function apparent_power_phase(phase)
+  return function(driver, device, value, zb_rx)
+    if not logic.is_valid_measure(value.value) then return end
+    emit_to(device, "phase" .. phase, c_instantaneous.power({ value = value.value, unit = "VA" }))
+  end
+end
+
+-- 0x0306 : SINSTS, puissance apparente totale. Utilisée seulement en triphasé
+-- standard : en monophasé, 0x050F donne déjà la même valeur.
+local function total_apparent_power(driver, device, value, zb_rx)
+  if not logic.is_valid_measure(value.value) then return end
+  local info = mode_info(device)
+  if info and info.standard and info.tri then
+    emit_to(device, "main", c_instantaneous.power({ value = value.value, unit = "VA" }))
+  end
+end
+
+local function injected_power_handler(driver, device, value, zb_rx)
+  if not logic.is_valid_measure(value.value) then return end
+  emit_to(device, "production", c_instantaneous.power({ value = value.value, unit = "VA" }))
+end
+
+------------------------------------------------------------------------------
+-- Informations du compteur
+------------------------------------------------------------------------------
+
+local function emit_subscription_power(device)
+  local kva = logic.subscribed_power_kva(device:get_field(F_RAW_POWER), mode_info(device))
+  if kva ~= nil then
+    emit_to(device, "main", c_subscription.power({ value = kva, unit = "kVA" }))
+  end
+end
+
+local function mode_handler(driver, device, value, zb_rx)
+  if logic.decode_mode(value.value) == nil then
+    log.warn(string.format("[%s] mode Linky inattendu : %s", device.id, tostring(value.value)))
+    return
+  end
+  emit_to(device, "linky", c_linkyMode.mode({ value = value.value }))
+  local changed = device:get_field(F_MODE) ~= value.value
+  device:set_field(F_MODE, value.value, PERSIST)
+  if changed then
+    emit_subscription_power(device)
+  end
+  update_profile(device)
+end
+
+local function serial_handler(driver, device, value, zb_rx)
+  local serial = logic.clean_string(value.value)
+  if serial then
+    emit_to(device, "linky", c_linkySerial.serial({ value = serial }))
+  end
+end
+
+local function tariff_handler(driver, device, value, zb_rx)
+  local tariff = logic.clean_string(value.value)
+  if tariff then
+    emit_to(device, "main", c_subscription.mode({ value = tariff }))
+  end
+end
+
+local function subscribed_power_handler(driver, device, value, zb_rx)
+  device:set_field(F_RAW_POWER, value.value, PERSIST)
+  emit_subscription_power(device)
+end
+
+-- Tension d'alimentation du module (et non du réseau), en mV d'après les
+-- seuils documentés par LiXee (2600 / 3600).
+local function module_voltage_handler(driver, device, value, zb_rx)
+  emit_to(device, "linky", c_linkyPoweringModule.voltage({ value = value.value, unit = "mV" }))
+end
+
+------------------------------------------------------------------------------
+-- Cycle de vie
+------------------------------------------------------------------------------
+
+local function poll(device)
+  read_spaced(device, READ_ONLY_ATTRIBUTES)
+end
+
+local function device_init(driver, device)
+  log.info("[" .. device.id .. "] Initialisation du ZLinky")
+  register_reporting(device)
+  device.thread:call_on_schedule(POLL_INTERVAL_S, function() poll(device) end, "zlinky_poll")
   device:online()
 end
 
-
---local do_configure = function(self, device)
---   device:configure()
---   device:refresh()
---end
-
-local function zlinky_PAPP_SINST_SINST1(driver, device, value, zb_rx)
-   device:emit_event_for_endpoint(
-      zb_rx.address_header.src_endpoint.value,
-      c_instantaneous.power({ value = value.value, unit = "VA" })
-   )
+local function device_added(driver, device)
+  read_all(device)
 end
 
-local function zlinky_IINST_IINST1_IRMS1(driver, device, value, zb_rx)
-   device:emit_event_for_endpoint(
-      zb_rx.address_header.src_endpoint.value,
-      c_instantaneous.current({ value = value.value, unit = "A" })
-   )
-end
-
-local function zlinky_mode(driver, device, value, zb_rx)
-   device:emit_component_event(device.profile.components.linky,
-			       c_linkyMode.mode({ value = value.value }))  
-end
-
-local function zlinky_ADC0_ADSC(driver, device, value, zb_rx)
-   device:emit_component_event(device.profile.components.linky,
-			       c_linkySerial.serial({ value = value.value }))
-end
-
-local function zlinky_OPTARIF_NGTF(driver, device, value, zb_rx)
-   device:emit_event_for_endpoint(
-      zb_rx.address_header.src_endpoint.value,
-      c_subscription.mode({ value = value.value })
-   )
-end
-
-local function zlinky_ISOUSC_PREF(driver, device, value, zb_rx)
-   device:emit_event_for_endpoint(
-      zb_rx.address_header.src_endpoint.value,
-      c_subscription.power({ value = value.value * 200 / 1000, unit = "kVA" })
-   )
-end
-
-
-
-local function battery_volt_attr_handler(driver, device, value, zb_rx)
-   device:emit_component_event(device.profile.components.linky,
-			       c_linkyPoweringModule.voltage({ value = value.value, unit = "mV" }))
+local function do_configure(driver, device)
+  local profile = register_reporting(device)
+  device:configure()
+  device:set_field(F_CONFIGURED, profile, PERSIST)
+  read_all(device)
 end
 
 local function refresh_handler(driver, device, command)
-  device:send(clusters.PowerConfiguration.attributes.MainsVoltage:read(device))
-  device:send(clusters.Basic.attributes.SWBuildID:read(device))
-  device:send(cluster_base.read_attribute(device,
-					  data_types.ClusterId(0xFF66),
-					  data_types.AttributeId(0x0300)))
-  device:send(cluster_base.read_attribute(device,
-					  data_types.ClusterId(0xFF66),
-					  data_types.AttributeId(0x0000)))
+  read_all(device)
+end
 
-    device:send(cluster_base.read_attribute(device,
-					  data_types.ClusterId(0x0B01),
-					  data_types.AttributeId(0x000D)))
+------------------------------------------------------------------------------
+-- Driver
+------------------------------------------------------------------------------
 
+local metering_handlers = {
+  [0x0000] = total_handler,            -- BASE / EAST
+  [0x0001] = injected_energy_handler,  -- EAIT (production)
+  [0x0308] = serial_handler,           -- ADCO / ADSC
+}
+for i = 1, TIER_COUNT do
+  metering_handlers[tier_attribute(i)] = tier_handler(i)
 end
 
 local zigbee_zlinky_template = {
-   supported_capabilities = {
-      capabilities.refresh,
-      capabilities.energyMeter,
---    capabilities.battery,
-   },
-   capability_handlers = {
---      [capabilities.refresh.ID] = {
---	 [capabilities.refresh.commands.refresh.NAME] = refresh_handler
---      }
-   },
-   additional_zcl_profiles = {
-      [ clusters.SimpleMetering.ID        ] = true,
-      [ 0x0B01                            ] = true,
-      [ clusters.ElectricalMeasurement.ID ] = true,
-      [ 0xFF66                            ] = true,
-   },
-   zigbee_handlers = {
-      attr = {
-	 [ clusters.PowerConfiguration.ID ] = {
-	    [ clusters.PowerConfiguration.attributes.MainsVoltage.ID ] = battery_volt_attr_handler,
-	 -- [ clusters.PowerConfiguration.attributes.MainsVoltageMinThreshold.ID ] = yo,
-	 -- [ clusters.PowerConfiguration.attributes.MainsVoltageMaxThreshold.ID ] = yo,
-	 },	
-	 [ clusters.SimpleMetering.ID ] = { -- 0x0702
-	 -- 0x0000 (handled by capabilities.energyMeter)
-         -- [ clusters.SimpleMetering.attributes.CurrentSummationDelivered.ID ] = zlinky_index,
-	 -- -- 0x0100
-	 -- [ 0x0100 ] = zlinky_index,
-	 -- -- 0x0102
-	 -- [ 0x0102 ] = zlinky_index,
-	 -- -- 0x0104
-	 -- [ 0x0104 ] = zlinky_index,
-	 -- -- 0x0106
-	 -- [ 0x0106 ] = zlinky_index,
-	 -- -- 0x0108
-	 -- [ 0x0108 ] = zlinky_index,
-	 -- -- 0x010A
-	 -- [ 0x010A ] = zlinky_index,
-	 -- -- 0x010C
-	 -- [ 0x010C ] = zlinky_index,
-	 -- -- 0x010E
-	 -- [ 0x010E ] = zlinky_index,
-	 -- -- 0x0110
-	 -- [ 0x0110 ] = zlinky_index,
-	 -- -- 0x0112
-	 -- [ 0x0112 ] = zlinky_index,
-	    -- 0x0308
-	    [ 0x0308 ] = zlinky_ADC0_ADSC,
-	 },
-	 [ clusters.ElectricalMeasurement.ID ] = { -- 0x0B04
-	    -- 0x0508 | IINST / IINST1 | IRMS1
-	    [ clusters.ElectricalMeasurement.attributes.RMSCurrent.ID         ] = zlinky_IINST_IINST1_IRMS1,
-	 -- -- 0x0908 | IINST2 | IRMS2
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSCurrentPhB.ID      ] = zlinky_IINST2_IRMS2,
-	 -- -- 0x0A08 | IINST3 | IRMS3
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSCurrentPhC.ID      ] = zlinky_IINST3_IRMS3,
-	 -- -- 0x050A | IMAX / IMAX1 | -
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSCurrentMax.ID      ] = zlinky_IMAX_IMAX1,
-	 -- -- 0x090A | IMAX2
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSCurrentMaxPhB.ID   ] = zlinky_IMAX2,
-	 -- -- 0x0A0A | IMAX3
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSCurrentMaxPhC.ID   ] = zlinky_IMAX3,
-	 -- -- 0x050D | PMAX | SMAXN / SMAXN1
-	 -- [ clusters.ElectricalMeasurement.attributes.ActivePowerMax.ID     ] = zlinky_PMAX_SMANX_SMAXN1,
-	 -- 0x050F | PAPP | SINST / SINST1
-	    [ clusters.ElectricalMeasurement.attributes.ApparentPower.ID      ] = zlinky_PAPP_SINST_SINST1, 
-	 -- 0x090F | - | SINST2
-	 -- [ clusters.ElectricalMeasurement.attributes.ApparentPowerPhB.ID   ] = zlinky_SINST2,
-	 -- -- 0x0A0F | - | SINST3
-	 -- [ clusters.ElectricalMeasurement.attributes.ApparentPowerPhC.ID   ] = zlinky_SINST3, 
-	 -- -- 0x0305 | - | ERQ1
-	 -- [ clusters.ElectricalMeasurement.attributes.TotalReactivePower.ID ] = zlinky_ERQ1,
-	 -- -- 0x050E | - | ERQ2
-	 -- [ clusters.ElectricalMeasurement.attributes.ReactivePower.ID      ] = zlinky_ERQ2,
-	 -- -- 0x090E | - | ERQ3
-	 -- [ clusters.ElectricalMeasurement.attributes.ReactivePowerPhB.ID   ] = zlinky_ERQ3,
-	 -- -- 0x0A0E | - | ERQ4
-	 -- [ clusters.ElectricalMeasurement.attributes.ReactivePowerPhC.ID   ] = zlinky_ERQ4,
-	 -- -- 0x0505 | - | URMS1
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSVoltage.ID         ] = zlinky_URMS1,
-	 -- -- 0x0905 | - | URMS2
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSVoltagePhB.ID      ] = zlinky_URMS2,
-	 -- -- 0x0A05 | - | URMS3
-	 -- [ clusters.ElectricalMeasurement.attributes.RMSVoltagePhC.ID      ] = zlinky_URMS3, 
-	 -- -- 0x0511 | - | UMOY1
-	 -- [ clusters.ElectricalMeasurement.attributes.AverageRMSVoltageMeasurementPeriod.ID    ] = zlinky_UMOY1,
-	 -- -- 0x0911 | - | UMOY2
-	 -- [ clusters.ElectricalMeasurement.attributes.AverageRMSVoltageMeasurementPeriodPhB.ID ] = zlinky_UMOY2,
-	 -- -- 0x0A11 | - | UMOY3
-	 -- [ clusters.ElectricalMeasurement.attributes.AverageRMSVoltageMeasurementPeriodPhC.ID ] = zlinky_UMOY3, 
-	 -- -- 0x050B | - | CCASN
-	 -- [ clusters.ElectricalMeasurement.attributes.ActivePower.ID        ] = zlinky_CCASN,
-	 -- -- 0x090B | - | CCASN-1
-	 -- [ clusters.ElectricalMeasurement.attributes.ActivePowerPhB.ID     ] = zlinky_CCASN1,
-	 },
-	 [ 0xFF66 ] = {
-	    [ 0x0000 ] = zlinky_OPTARIF_NGTF,
-	    [ 0x0300 ] = zlinky_mode
-	 },
-	 [ 0x0B01 ] = {
-	 -- -- 0x000A | - | VTIC
-	 -- [ 0x000A ] = zlinky_VTIC,
-	    -- 0x000D | ISOUSC | PREF
-	    [ 0x000D ] = zlinky_ISOUSC_PREF,
-	 -- -- 0x000E | - | PCOUP
-	 -- [ 0x000E ] = zlinky_PCOUP
-	 }
-      }
-   },
-   lifecycle_handlers = {
-      init = device_init,
---      doConfigure = do_configure
-   },
+  supported_capabilities = {
+    capabilities.refresh,
+    capabilities.energyMeter,
+    capabilities.powerConsumptionReport,
+    capabilities.currentMeasurement,
+    capabilities.voltageMeasurement,
+  },
+  capability_handlers = {
+    [capabilities.refresh.ID] = {
+      [capabilities.refresh.commands.refresh.NAME] = refresh_handler,
+    },
+  },
+  additional_zcl_profiles = {
+    [CLUSTER_METERING]   = true,
+    [CLUSTER_METER_ID]   = true,
+    [CLUSTER_ELECTRICAL] = true,
+    [CLUSTER_LIXEE]      = true,
+  },
+  zigbee_handlers = {
+    attr = {
+      [CLUSTER_POWER_CFG] = {
+        [ATTR_MAINS_VOLTAGE.ID] = module_voltage_handler,
+      },
+      [CLUSTER_METERING] = metering_handlers,
+      [CLUSTER_ELECTRICAL] = {
+        [0x0306] = total_apparent_power,     -- SINSTS (triphasé)
+        [0x0505] = voltage_handler(1),       -- URMS1
+        [0x0905] = voltage_handler(2),       -- URMS2
+        [0x0A05] = voltage_handler(3),       -- URMS3
+        [0x0508] = current_handler(1),       -- IINST / IINST1 / IRMS1
+        [0x0908] = current_handler(2),       -- IINST2 / IRMS2
+        [0x0A08] = current_handler(3),       -- IINST3 / IRMS3
+        [0x050F] = apparent_power_050F,      -- PAPP / SINSTS / SINSTS1
+        [0x090F] = apparent_power_phase(2),  -- SINSTS2
+        [0x0A0F] = apparent_power_phase(3),  -- SINSTS3
+      },
+      [CLUSTER_LIXEE] = {
+        [0x0000] = tariff_handler,           -- OPTARIF / NGTF
+        [0x0207] = injected_power_handler,   -- SINSTI (production)
+        [0x0300] = mode_handler,             -- mode Linky
+      },
+      [CLUSTER_METER_ID] = {
+        [0x000D] = subscribed_power_handler, -- ISOUSC / PREF
+      },
+    },
+  },
+  lifecycle_handlers = {
+    init        = device_init,
+    added       = device_added,
+    doConfigure = do_configure,
+  },
 }
-
-
-defaults.register_for_default_handlers(zigbee_zlinky_template, zigbee_zlinky_template.supported_capabilities)
 
 local zigbee_zlinky = ZigbeeDriver("zigbee_zlinky", zigbee_zlinky_template)
 zigbee_zlinky:run()
-
-
-
-
-

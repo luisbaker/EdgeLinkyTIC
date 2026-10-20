@@ -1,7 +1,13 @@
 zigbeeManufacturer:
   - id: "LiXee/ ZLinky_TIC"
     deviceLabel: "ZLinky TIC"
-    manufacturer: 'LiXee'
-    model: 'ZLinky_TIC'
+    manufacturer: "LiXee"
+    model: "ZLinky_TIC"
     deviceProfileName: zigbee-zlinky
-    
+  # Certains firmwares envoient le modèle suivi d'un caractère nul
+  # (zigbee2mqtt reconnaît aussi « ZLinky_TIC\u0000 »).
+  - id: "LiXee/ZLinky_TIC-nul"
+    deviceLabel: "ZLinky TIC"
+    manufacturer: "LiXee"
+    model: "ZLinky_TIC\0"
+    deviceProfileName: zigbee-zlinky
