@@ -22,31 +22,46 @@ function M.decode_mode(mode)
 end
 
 -- Nombres d'index proposés par les profils (voir tools/generer-profils.sh).
-M.INDEX_STEPS = { 1, 2, 6, 10 }
+-- Le mode historique a au plus 6 index (BBR), le mode standard 10 (EASF01 à 10).
+M.INDEX_STEPS_HISTO    = { 1, 2, 6 }
+M.INDEX_STEPS_STANDARD = { 1, 2, 6, 10 }
+
+function M.index_steps(mode_info)
+  if mode_info ~= nil and not mode_info.standard then
+    return M.INDEX_STEPS_HISTO
+  end
+  return M.INDEX_STEPS_STANDARD
+end
 
 -- Plus petit nombre d'index de profil couvrant l'index le plus élevé observé.
-function M.index_slots(highest_index)
+function M.index_slots(highest_index, mode_info)
+  local steps = M.index_steps(mode_info)
   if type(highest_index) ~= "number" or highest_index <= 1 then
     return 1
   end
-  for _, step in ipairs(M.INDEX_STEPS) do
+  for _, step in ipairs(steps) do
     if highest_index <= step then
       return step
     end
   end
-  return M.INDEX_STEPS[#M.INDEX_STEPS]
+  return steps[#steps]
 end
 
 -- Nom du profil SmartThings ; doit rester aligné avec tools/generer-profils.sh.
+-- Tant que le mode est inconnu, on garde le profil par défaut « zigbee-zlinky ».
 function M.profile_name(mode_info, index_slots)
   local name = "zigbee-zlinky"
-  if mode_info and mode_info.tri then
+  if mode_info == nil then
+    return name
+  end
+  name = name .. (mode_info.standard and "-std" or "-histo")
+  if mode_info.tri then
     name = name .. "-tri"
   end
   if index_slots and index_slots > 1 then
     name = name .. "-idx" .. index_slots
   end
-  if mode_info and mode_info.production then
+  if mode_info.production then
     name = name .. "-prod"
   end
   return name
@@ -73,33 +88,42 @@ function M.is_valid_measure(value)
   return type(value) == "number" and value ~= 0xFFFF
 end
 
--- Index total en Wh. En historique HC/HP (et autres tarifs multi-index), le
--- ZLinky peut laisser 0x0702/0x0000 à 0 : on prend alors la somme des index,
--- comme le fait zigbee2mqtt. Renvoie nil tant qu'aucune valeur positive n'est
--- connue, pour ne pas afficher un faux 0 kWh au démarrage.
+-- Index total en Wh, et sa « base » de calcul.
+-- En historique HC/HP (et autres tarifs multi-index), le ZLinky peut laisser
+-- 0x0702/0x0000 à 0 : on prend alors la somme des index, comme zigbee2mqtt.
+-- La base identifie les index additionnés : si elle change (un index de plus
+-- est connu), le total fait un saut qui n'est pas une consommation.
+-- Renvoie nil tant qu'aucune valeur positive n'est connue, pour ne pas
+-- afficher un faux 0 kWh au démarrage.
 function M.total_energy_wh(total, tiers)
   if type(total) == "number" and total > 0 then
-    return total
+    return total, "total"
   end
-  local sum = 0
-  for _, v in pairs(tiers or {}) do
-    if type(v) == "number" and v > 0 then
-      sum = sum + v
+  local sum, keys = 0, {}
+  for k, v in pairs(tiers or {}) do
+    if type(v) == "number" then
+      table.insert(keys, k)
+      if v > 0 then
+        sum = sum + v
+      end
     end
   end
   if sum > 0 then
-    return sum
+    table.sort(keys)
+    return sum, "somme:" .. table.concat(keys, ",")
   end
-  return nil
+  return nil, nil
 end
 
 -- SmartThings Energy : au plus un rapport toutes les 15 minutes.
 M.REPORT_INTERVAL_S = 15 * 60
 
 -- Calcule le prochain rapport powerConsumptionReport, ou nil s'il est trop tôt.
--- Une baisse d'index (compteur changé, remise à zéro) donne un delta nul plutôt
--- qu'une consommation négative.
-function M.consumption_report(now, energy_wh, last_time, last_energy_wh)
+-- Le delta est nul (on repart de la valeur courante) quand :
+--   - c'est le premier rapport ;
+--   - la base de calcul du total a changé (voir total_energy_wh) ;
+--   - l'index a baissé (compteur changé, remise à zéro).
+function M.consumption_report(now, energy_wh, basis, last_time, last_energy_wh, last_basis)
   if type(energy_wh) ~= "number" then
     return nil
   end
@@ -107,14 +131,18 @@ function M.consumption_report(now, energy_wh, last_time, last_energy_wh)
     return nil
   end
   local delta = 0
-  if type(last_energy_wh) == "number" and energy_wh >= last_energy_wh then
+  if type(last_energy_wh) == "number" and basis == last_basis and energy_wh >= last_energy_wh then
     delta = energy_wh - last_energy_wh
   end
+  local start = last_time or now
   return {
-    start        = last_time or now,
-    finish       = now,
-    delta_wh     = delta,
-    energy_wh    = energy_wh,
+    start     = start,
+    -- comme les drivers officiels : la période se termine 1 s avant le rapport
+    finish    = math.max(start, now - 1),
+    time      = now,
+    delta_wh  = delta,
+    energy_wh = energy_wh,
+    basis     = basis,
   }
 end
 

@@ -41,6 +41,7 @@ local F_TOTAL         = "total_wh"
 local F_TIERS         = "tiers_wh"            -- clés "t1"…"t10" (sérialisation JSON stable)
 local F_REPORT_T      = "report_time"
 local F_REPORT_E      = "report_energy_wh"
+local F_REPORT_B      = "report_basis"        -- base de calcul du total (voir zlinky_logic)
 
 local POLL_INTERVAL_S = 3600   -- attributs en lecture seule (mode, tarif, abonnement…)
 local READ_SPACING_S  = 1      -- le ZLinky est alimenté par le Linky : on espace les lectures
@@ -55,11 +56,14 @@ local function mode_info(device)
   return logic.decode_mode(device:get_field(F_MODE))
 end
 
+-- N'émet que si le profil courant a ce composant et cette capacité : les
+-- profils n'ont que les capacités que le mode du compteur peut remplir, et le
+-- profil définitif n'est appliqué qu'une fois le mode connu.
 local function emit_to(device, component_id, event)
   local component = device.profile.components[component_id]
-  if component == nil then
-    -- Le profil n'a pas (encore) ce composant, par ex. avant la détection du triphasé.
-    log.debug(string.format("[%s] composant %s absent du profil, événement ignoré", device.id, component_id))
+  if component == nil or not device:supports_capability(event.capability, component_id) then
+    log.debug(string.format("[%s] %s.%s absent du profil, événement ignoré",
+                            device.id, component_id, event.capability.ID))
     return
   end
   device:emit_component_event(component, event)
@@ -187,10 +191,9 @@ end
 -- Enregistre les rapports attendus et renvoie le nom du profil correspondant.
 local function register_reporting(device)
   local info = mode_info(device)
-  local slots = logic.index_slots(device:get_field(F_HIGHEST_INDEX))
+  local slots = logic.index_slots(device:get_field(F_HIGHEST_INDEX), info)
   for _, config in ipairs(reportable_attributes(info, slots)) do
     device:add_configured_attribute(config)
-    device:add_monitored_attribute(config)
   end
   return logic.profile_name(info, slots)
 end
@@ -213,10 +216,11 @@ end
 -- Énergie
 ------------------------------------------------------------------------------
 
-local function report_consumption(device, energy_wh)
-  local report = logic.consumption_report(os.time(), energy_wh,
+local function report_consumption(device, energy_wh, basis)
+  local report = logic.consumption_report(os.time(), energy_wh, basis,
                                           device:get_field(F_REPORT_T),
-                                          device:get_field(F_REPORT_E))
+                                          device:get_field(F_REPORT_E),
+                                          device:get_field(F_REPORT_B))
   if report == nil then
     return
   end
@@ -226,17 +230,18 @@ local function report_consumption(device, energy_wh)
     deltaEnergy = report.delta_wh,
     energy      = report.energy_wh,
   }))
-  device:set_field(F_REPORT_T, report.finish, PERSIST)
+  device:set_field(F_REPORT_T, report.time, PERSIST)
   device:set_field(F_REPORT_E, report.energy_wh, PERSIST)
+  device:set_field(F_REPORT_B, report.basis, PERSIST)
 end
 
 local function emit_total_energy(device)
-  local energy_wh = logic.total_energy_wh(device:get_field(F_TOTAL), device:get_field(F_TIERS))
+  local energy_wh, basis = logic.total_energy_wh(device:get_field(F_TOTAL), device:get_field(F_TIERS))
   if energy_wh == nil then
     return
   end
   emit_to(device, "main", capabilities.energyMeter.energy({ value = energy_wh / 1000, unit = "kWh" }))
-  report_consumption(device, energy_wh)
+  report_consumption(device, energy_wh, basis)
 end
 
 local function total_handler(driver, device, value, zb_rx)
@@ -280,10 +285,8 @@ local function current_handler(phase)
     local component = phase_component(device, phase)
     if component == nil then return end
     emit_to(device, component, capabilities.currentMeasurement.current({ value = value.value, unit = "A" }))
-    -- Compatibilité : la capacité Instantaneous reste alimentée sur « main ».
-    if component == "main" then
-      emit_to(device, "main", c_instantaneous.current({ value = value.value, unit = "A" }))
-    end
+    -- Instantaneous regroupe A, V et VA : on la remplit aussi pour éviter les cases vides.
+    emit_to(device, component, c_instantaneous.current({ value = value.value, unit = "A" }))
   end
 end
 
@@ -294,9 +297,7 @@ local function voltage_handler(phase)
     local component = phase_component(device, phase)
     if component == nil then return end
     emit_to(device, component, capabilities.voltageMeasurement.voltage({ value = value.value, unit = "V" }))
-    if component == "main" then
-      emit_to(device, "main", c_instantaneous.voltage({ value = value.value, unit = "V" }))
-    end
+    emit_to(device, component, c_instantaneous.voltage({ value = value.value, unit = "V" }))
   end
 end
 
@@ -408,14 +409,20 @@ local function device_init(driver, device)
   device:online()
 end
 
-local function device_added(driver, device)
-  read_all(device)
-end
-
 local function do_configure(driver, device)
   local profile = register_reporting(device)
   device:configure()
   device:set_field(F_CONFIGURED, profile, PERSIST)
+  read_all(device)
+end
+
+-- Passage depuis un autre driver (par ex. la version d'origine) : doConfigure
+-- n'est pas rappelé, on configure donc les rapports ici.
+local function driver_switched(driver, device, event, args)
+  local profile = register_reporting(device)
+  device:configure()
+  device:set_field(F_CONFIGURED, profile, PERSIST)
+  device.thread:queue_event(device.try_update_metadata, device, { provisioning_state = "PROVISIONED" })
   read_all(device)
 end
 
@@ -445,6 +452,14 @@ local zigbee_zlinky_template = {
     capabilities.signalStrength,
     capabilities.currentMeasurement,
     capabilities.voltageMeasurement,
+    -- Les capacités personnalisées doivent être déclarées : au changement de
+    -- driver, SmartThings marque l'appareil « non fonctionnel » si une
+    -- capacité du profil n'est pas listée ici.
+    c_instantaneous,
+    c_subscription,
+    c_linkyMode,
+    c_linkySerial,
+    c_linkyPoweringModule,
   },
   capability_handlers = {
     [capabilities.refresh.ID] = {
@@ -487,10 +502,14 @@ local zigbee_zlinky_template = {
     },
   },
   lifecycle_handlers = {
-    init        = device_init,
-    added       = device_added,
-    doConfigure = do_configure,
+    init           = device_init,
+    doConfigure    = do_configure,
+    driverSwitched = driver_switched,
   },
+  -- Surveillance d'attributs obsolète dans la bibliothèque SmartThings : les
+  -- attributs en lecture seule sont relus par poll(), les autres sont envoyés
+  -- par le module selon les rapports configurés.
+  health_check = false,
 }
 
 -- Qualité du signal : publiée à partir de n'importe quel message reçu.

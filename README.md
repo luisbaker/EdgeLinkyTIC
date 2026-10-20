@@ -24,7 +24,7 @@ Fork maintenu de [sdalu/EdgeLinkyTIC](https://github.com/sdalu/EdgeLinkyTIC). Le
 | Qualité du signal Zigbee (LQI, RSSI) | ✓ | ✓ | `linky` |
 | Mode, numéro de série, tension du module | ✓ | ✓ | `linky` |
 
-Le driver lit le mode du Linky (attribut `0xFF66/0x0300`) et le nombre d'index utilisés, puis bascule automatiquement sur le profil adapté (monophasé ou triphasé, 1, 2, 6 ou 10 index, avec ou sans production).
+Le driver lit le mode du Linky (attribut `0xFF66/0x0300`) et le nombre d'index utilisés, puis bascule automatiquement sur le profil adapté : historique ou standard, monophasé ou triphasé, 1, 2, 6 ou 10 index, avec ou sans production. Chaque profil ne contient que ce que le compteur peut remplir, pour éviter les cases vides (par exemple pas de tension en mode historique).
 
 L'onglet SmartThings Energy n'affiche que les appareils certifiés pour ce service à la demande du fabricant : le ZLinky n'y apparaîtra probablement pas, même si le driver envoie les rapports de consommation au bon format.
 

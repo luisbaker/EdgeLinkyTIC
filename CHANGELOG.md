@@ -10,6 +10,20 @@
 - Le bouton Rafraîchir relit réellement les données du module.
 - En historique multi-index, l'index total est la somme des index si BASE vaut 0.
 
+### Corrigé (audit)
+- Passage depuis un autre driver : les capacités personnalisées sont déclarées, l'appareil n'est plus marqué « non fonctionnel », et les rapports sont configurés.
+- SmartThings Energy : plus de faux pic de consommation quand les index d'un contrat multi-index arrivent un par un au démarrage.
+- Fin de période des rapports de consommation 1 s avant le rapport, comme les drivers officiels.
+- Plus d'avertissements dans les journaux pour les capacités absentes du profil.
+- Surveillance d'attributs obsolète (`health_check`) désactivée.
+- Une seule série de lectures au jumelage au lieu de deux.
+
+### Affichage
+- Profils séparés pour les modes historique et standard : plus de cases vides (tension, puissance en W, production).
+- La consommation (kWh) est la première information affichée.
+- En triphasé standard, chaque phase affiche intensité, tension et puissance.
+- Composant « Linky » renommé « Compteur Linky ».
+
 ### Ajouté
 - Index tarifaires (HC/HP, Tempo, EJP, EASF01 à EASF10), chacun dans son composant.
 - Triphasé : intensité, tension et puissance apparente par phase.
