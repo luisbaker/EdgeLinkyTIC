@@ -4,7 +4,7 @@ Driver SmartThings Edge pour le module Zigbee [ZLinky TIC de LiXee](https://lixe
 
 Fork maintenu de [sdalu/EdgeLinkyTIC](https://github.com/sdalu/EdgeLinkyTIC). Les contributions sont les bienvenues.
 
-> ⚠️ **Tests en cours.** La branche `compatibilite` (triphasé, index tarifaires, production, capacités standard) n'a pas encore été testée sur un hub SmartThings ni avec un vrai compteur Linky. Les retours sont les bienvenus : ouvre une issue en précisant le mode du Linky (historique ou standard), le nombre de phases et ton option tarifaire.
+> ⚠️ **Tests en cours.** Cette version (triphasé, index tarifaires, production, capacités standard) n’a pas encore été testée sur un hub SmartThings ni avec un vrai compteur Linky. Les retours sont les bienvenus : ouvre une issue en précisant le mode du Linky (historique ou standard), le nombre de phases et ton option tarifaire.
 
 ![zlinky_tic](https://user-images.githubusercontent.com/1355524/209728509-ae196622-ae63-4290-ac8f-e47ee9a3c4b0.png)
 
