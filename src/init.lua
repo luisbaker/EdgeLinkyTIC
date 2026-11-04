@@ -261,9 +261,37 @@ local function current_handler(driver, device, value, zb_rx)
   device:emit_event(capabilities.currentMeasurement.current({ value = round(value.value / CURRENT_DIVISOR, 3), unit = "A" }))
 end
 
+-- Consommation par periode, affichee sur la page de la prise (composants
+-- "today", "week", "month" du profil). Remise a zero a minuit, le lundi et le 1er.
+local PERIODS = {
+  { component = "today", key = function(t) return os.date("!%Y-%m-%d", t) end },
+  { component = "week",  key = function(t) return os.date("!%Y-S%W", t) end }, -- semaine commencant le lundi
+  { component = "month", key = function(t) return os.date("!%Y-%m", t) end },
+}
+
+local function update_periods(device, kwh)
+  local local_time = os.time() + pref(device, "utcOffset", 1) * 3600
+  for _, p in ipairs(PERIODS) do
+    local component = device.profile.components[p.component]
+    if component ~= nil then
+      local key = p.key(local_time)
+      local key_field = "period_key_" .. p.component
+      local base_field = "period_base_" .. p.component
+      if device:get_field(key_field) ~= key or device:get_field(base_field) == nil then
+        device:set_field(key_field, key, { persist = true })
+        device:set_field(base_field, kwh, { persist = true })
+      end
+      local used = math.max(0, kwh - device:get_field(base_field))
+      device:emit_component_event(component, capabilities.energyMeter.energy({ value = round(used, 2), unit = "kWh" }))
+    end
+  end
+end
+
 local function energy_handler(driver, device, value, zb_rx)
   if probe_metering(driver, device, value.value) then return end
-  device:emit_event(capabilities.energyMeter.energy({ value = round(value.value / ENERGY_DIVISOR, 2), unit = "kWh" }))
+  local kwh = round(value.value / ENERGY_DIVISOR, 2)
+  device:emit_event(capabilities.energyMeter.energy({ value = kwh, unit = "kWh" }))
+  update_periods(device, kwh)
 end
 
 local function configure_plug(driver, device)

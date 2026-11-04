@@ -20,9 +20,24 @@ components:
         version: 1
     categories:
       - name: SmartPlug
+  - id: today
+    label: "Aujourd'hui"
+    capabilities:
+      - id: energyMeter
+        version: 1
+  - id: week
+    label: "Cette semaine"
+    capabilities:
+      - id: energyMeter
+        version: 1
+  - id: month
+    label: "Ce mois-ci"
+    capabilities:
+      - id: energyMeter
+        version: 1
 metadata:
   mnmn: SmartThingsCommunity
-  vid: e40b66de-02d3-3f06-ba37-ed9a78c07e68
+  vid: e0268514-45d4-3db3-8fdb-7c7da3c6fd9f
 preferences:
   - name: "pollInterval"
     title: "Lecture de la conso (secondes)"
@@ -63,3 +78,12 @@ preferences:
     preferenceType: boolean
     definition:
       default: false
+  - name: "utcOffset"
+    title: "Decalage horaire (heures)"
+    description: "Pour couper les journees a minuit : 1 en hiver, 2 en ete (France)"
+    required: false
+    preferenceType: integer
+    definition:
+      minimum: -12
+      maximum: 14
+      default: 1
