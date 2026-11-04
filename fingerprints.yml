@@ -1,4 +1,5 @@
 zigbeeManufacturer:
+  # --- LiXee ZLinky TIC (compteur Linky) : sous-driver src/zlinky/ ---
   - id: "LiXee/ ZLinky_TIC"
     deviceLabel: "ZLinky TIC"
     manufacturer: "LiXee"
@@ -11,3 +12,29 @@ zigbeeManufacturer:
     manufacturer: "LiXee"
     model: "ZLinky_TIC\0"
     deviceProfileName: zigbee-zlinky
+  # --- Tuya ---
+  - id: "_TZ3210_rwmitwj4/TS011F"
+    deviceLabel: "Prise Zigbee"
+    manufacturer: _TZ3210_rwmitwj4
+    model: TS011F
+    deviceProfileName: plug-power-energy
+  - id: "_TZ3000_hy6ncvmw/TS0222"
+    deviceLabel: "Capteur de luminosite"
+    manufacturer: _TZ3000_hy6ncvmw
+    model: TS0222
+    deviceProfileName: illuminance-battery-tuya
+  - id: "HOBEIAN/ZG-227Z"
+    deviceLabel: "Capteur Temperature Humidite"
+    manufacturer: HOBEIAN
+    model: ZG-227Z
+    deviceProfileName: temp-humidity-battery-tuya
+  - id: "_TZ3000_o1jzcxou/TS011F"
+    deviceLabel: "Prise BSEED"
+    manufacturer: _TZ3000_o1jzcxou
+    model: TS011F
+    deviceProfileName: plug-tuya-basic
+  - id: "_TZ3210_wp1k8xws/TS0503B"
+    deviceLabel: "Ruban LED RGB"
+    manufacturer: _TZ3210_wp1k8xws
+    model: TS0503B
+    deviceProfileName: rgb-light-tuya

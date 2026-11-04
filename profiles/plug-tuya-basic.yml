@@ -1,0 +1,41 @@
+name: plug-tuya-basic
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: SmartPlug
+preferences:
+  - name: "powerOnBehavior"
+    title: "Apres une coupure de courant"
+    description: "Etat de la prise quand le courant revient. Envoye a la prise quand tu le changes."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "0": "Eteinte"
+        "1": "Allumee"
+        "2": "Etat precedent"
+      default: "2"
+  - name: "indicatorMode"
+    title: "Voyant"
+    description: "Comportement du voyant de la prise. Envoye a la prise quand tu le changes."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "0": "Toujours eteint"
+        "1": "Allume quand la prise est eteinte"
+        "2": "Allume quand la prise est allumee"
+        "3": "Toujours allume"
+      default: "2"
+  - name: "childLock"
+    title: "Verrouillage enfant"
+    description: "Desactive le bouton physique de la prise"
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false

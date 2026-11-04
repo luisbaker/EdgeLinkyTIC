@@ -1,0 +1,63 @@
+name: plug-power-energy
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: powerMeter
+        version: 1
+      - id: energyMeter
+        version: 1
+      - id: voltageMeasurement
+        version: 1
+      - id: currentMeasurement
+        version: 1
+      - id: powerConsumptionReport
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: SmartPlug
+metadata:
+  mnmn: SmartThingsCommunity
+  vid: e40b66de-02d3-3f06-ba37-ed9a78c07e68
+preferences:
+  - name: "pollInterval"
+    title: "Lecture de la conso (secondes)"
+    description: "Toutes les combien de secondes le hub lit la puissance (10 a 3600)"
+    required: false
+    preferenceType: integer
+    definition:
+      minimum: 10
+      maximum: 3600
+      default: 120
+  - name: "powerOnBehavior"
+    title: "Apres une coupure de courant"
+    description: "Etat de la prise quand le courant revient. Envoye a la prise quand tu le changes."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "0": "Eteinte"
+        "1": "Allumee"
+        "2": "Etat precedent"
+      default: "2"
+  - name: "indicatorMode"
+    title: "Voyant"
+    description: "Comportement du voyant de la prise. Envoye a la prise quand tu le changes."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "0": "Toujours eteint"
+        "1": "Allume quand la prise est eteinte"
+        "2": "Allume quand la prise est allumee"
+        "3": "Toujours allume"
+      default: "2"
+  - name: "childLock"
+    title: "Verrouillage enfant"
+    description: "Desactive le bouton physique de la prise"
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false

@@ -1,4 +1,6 @@
-name: 'Zigbee ZLinky'
-packageKey: 'zigbee-zlinky'
+name: 'Zigbee Luis (Tuya et ZLinky)'
+packageKey: 'zigbee-tuya-luis'
 permissions:
   zigbee: {}
+description: "ZLinky TIC (Linky), prise Tuya TS011F, capteur de luminosite TS0222, capteur temperature/humidite ZG-227Z"
+vendorSupportInformation: "https://github.com/luisbaker/EdgeLinkyTIC/issues"
