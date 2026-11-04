@@ -1,8 +1,11 @@
 -- Driver Edge pour SmartThings (Station, hubs v2/v3, Aeotec)
 --   * ZLinky TIC (LiXee)                       : compteur Linky -> sous-driver src/zlinky/
 --   * Prise TS011F (_TZ3210_rwmitwj4, Nous A7Z) : on/off, puissance, energie, tension, courant
+--   * Prise TS011F (_TZ3000_o1jzcxou, BSEED)    : on/off seul (pas de mesure), reglages Tuya
 --   * Capteur lux TS0222 (_TZ3000_hy6ncvmw)     : luminosite + batterie (canal Tuya), anti-spam
---   * Capteur ZG-227Z (HOBEIAN)                : temperature + humidite + batterie (canal Tuya)
+--   * Capteur ZG-227Z (HOBEIAN)                : temperature + humidite + batterie
+--   * Ruban LED TS0503B (_TZ3210_wp1k8xws)      : on/off, variation, couleur
+-- Tous : signal Zigbee (LQI/RSSI), version du firmware.
 --
 -- Sources utilisees pour les echelles / datapoints : Zigbee2MQTT (zigbee-herdsman-converters)
 --   src/devices/tuya.ts   -> TS011F_plug_1 (Nous A7Z), TS0222 "Light intensity sensor"
@@ -39,8 +42,6 @@ local LAST_LUX = "last_lux"
 local LAST_LUX_TIME = "last_lux_time"
 local HAS_BATTERY_PCT = "has_battery_pct"
 local USES_TUYA_LUX = "uses_tuya_lux"
-local USES_TUYA_TEMP = "uses_tuya_temp"
-local USES_TUYA_HUM = "uses_tuya_hum"
 local CONFIGURED_INTERVAL = "configured_interval_v2" -- v2 : force un vrai envoi (v1 etait note a tort)
 
 -- Ces capteurs envoient par le canal standard ET (plus rarement) par le canal Tuya.
@@ -335,15 +336,21 @@ end
 
 -- N'ecrit que les reglages modifies : la prise garde ses propres reglages
 -- tant que l'utilisateur n'y touche pas.
+-- Un reglage absent de l'ancien etat (nouveau dans le profil, ex. apres une mise a
+-- jour du driver) n'est pas un changement de l'utilisateur : on ne l'ecrit pas.
+local function changed(p, old, name)
+  return p[name] ~= nil and old[name] ~= nil and p[name] ~= old[name]
+end
+
 local function apply_plug_settings(device, old)
   local p = device.preferences or {}
-  if p.powerOnBehavior ~= nil and p.powerOnBehavior ~= old.powerOnBehavior then
+  if changed(p, old, "powerOnBehavior") then
     write_onoff_attribute(device, TUYA_POWER_ON, data_types.Enum8, tonumber(p.powerOnBehavior))
   end
-  if p.indicatorMode ~= nil and p.indicatorMode ~= old.indicatorMode then
+  if changed(p, old, "indicatorMode") then
     write_onoff_attribute(device, TUYA_INDICATOR_MODE, data_types.Enum8, tonumber(p.indicatorMode))
   end
-  if p.childLock ~= nil and p.childLock ~= old.childLock then
+  if changed(p, old, "childLock") then
     write_onoff_attribute(device, TUYA_CHILD_LOCK, data_types.Boolean, p.childLock)
   end
 end
@@ -374,7 +381,7 @@ local function emit_lux(device, lux)
   device:emit_event(capabilities.illuminanceMeasurement.illuminance({ value = lux, unit = "lux" }))
 end
 
--- Cluster standard 0x0400 (utilise seulement si le canal Tuya n'envoie rien)
+-- Cluster standard 0x0400 (ignore pendant 10 min apres une mesure du canal Tuya)
 local function lux_handler(driver, device, value, zb_rx)
   if tuya_recent(device, USES_TUYA_LUX) then return end
   local raw = value.value
@@ -488,10 +495,8 @@ local function handle_tuya_dp(device, dp, dp_type, value)
     end
   elseif is_temp(device) then
     if dp == 1 then
-      device:set_field(USES_TUYA_TEMP, os.time())
       emit_temperature(device, value / 10)
     elseif dp == 2 then
-      device:set_field(USES_TUYA_HUM, os.time())
       emit_humidity(device, value)
     elseif dp == 4 then
       emit_battery(device, value)
