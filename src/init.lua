@@ -20,6 +20,10 @@ local device_management = require "st.zigbee.device_management"
 local cluster_base = require "st.zigbee.cluster_base"
 local data_types = require "st.zigbee.data_types"
 local log = require "log"
+local zcl_messages = require "st.zigbee.zcl"
+local messages = require "st.zigbee.messages"
+local zb_const = require "st.zigbee.constants"
+local generic_body = require "st.zigbee.generic_body"
 
 local OnOff = clusters.OnOff
 local ElectricalMeasurement = clusters.ElectricalMeasurement
@@ -386,6 +390,78 @@ local function configure_light(driver, device)
   light_refresh(device)
 end
 
+-- Les controleurs RGB Tuya ont, en mode couleur, leur propre luminosite interne :
+-- avec les seules commandes standard, la couleur peut rester faible meme a 100 %.
+-- Comme Zigbee2MQTT (lib/tuya.ts), on envoie la commande Tuya 0x06 du cluster
+-- ColorControl (teinte, saturation, transition, luminosite), apres 0xF0 (mode RGB).
+local TUYA_CMD_RGB_MODE = 0xF0
+local TUYA_CMD_HUE_SAT_BRIGHTNESS = 0x06
+
+local function color_cluster_command(device, cmd_id, payload)
+  local header = zcl_messages.ZclHeader({ cmd = data_types.ZCLCommandId(cmd_id) })
+  header.frame_ctrl:set_cluster_specific()
+  return messages.ZigbeeMessageTx({
+    address_header = messages.AddressHeader(
+      zb_const.HUB.ADDR, zb_const.HUB.ENDPOINT,
+      device:get_short_address(), device:get_endpoint(ColorControl.ID) or 1,
+      zb_const.HA_PROFILE_ID, ColorControl.ID),
+    body = zcl_messages.ZclMessageBody({ zcl_header = header, zcl_body = generic_body.GenericBody(payload) }),
+  })
+end
+
+local function to254(pct) return clamp(math.floor((tonumber(pct) or 0) * 254 / 100 + 0.5), 0, 254) end
+
+local function latest(device, cap, attr, default)
+  local v = device:get_latest_state("main", cap.ID, attr.NAME)
+  if v == nil then return default end
+  return v
+end
+
+-- hue, sat, level en % (echelle SmartThings 0-100)
+local function send_tuya_color(device, hue, sat, level)
+  device:send(color_cluster_command(device, TUYA_CMD_RGB_MODE, string.char(0x01)))
+  device:send(color_cluster_command(device, TUYA_CMD_HUE_SAT_BRIGHTNESS,
+    string.char(to254(hue), to254(sat), 0x00, 0x00, to254(level))))
+end
+
+local function light_set_level(driver, device, command)
+  local level = clamp(math.floor(tonumber(command.args.level) or 0), 0, 100)
+  if level == 0 then
+    device:send(OnOff.server.commands.Off(device))
+    return
+  end
+  device:send(Level.server.commands.MoveToLevelWithOnOff(device, to254(level), 0))
+  local sat = latest(device, capabilities.colorControl, capabilities.colorControl.saturation, 0)
+  if sat > 0 then -- mode couleur : regle aussi la luminosite interne Tuya
+    local hue = latest(device, capabilities.colorControl, capabilities.colorControl.hue, 0)
+    send_tuya_color(device, hue, sat, level)
+  end
+  device:emit_event(capabilities.switchLevel.level(level))
+end
+
+local function light_set_color(driver, device, command)
+  local color = command.args.color or {}
+  local hue = clamp(tonumber(color.hue) or 0, 0, 100)
+  local sat = clamp(tonumber(color.saturation) or 100, 0, 100)
+  local level = latest(device, capabilities.switchLevel, capabilities.switchLevel.level, 100)
+  if latest(device, capabilities.switch, capabilities.switch.switch, "off") ~= "on" then
+    device:send(OnOff.server.commands.On(device))
+  end
+  send_tuya_color(device, hue, sat, level)
+  device:emit_event(capabilities.colorControl.hue(math.floor(hue + 0.5)))
+  device:emit_event(capabilities.colorControl.saturation(math.floor(sat + 0.5)))
+end
+
+local function light_set_hue(driver, device, command)
+  local sat = latest(device, capabilities.colorControl, capabilities.colorControl.saturation, 100)
+  light_set_color(driver, device, { args = { color = { hue = command.args.hue, saturation = sat } } })
+end
+
+local function light_set_saturation(driver, device, command)
+  local hue = latest(device, capabilities.colorControl, capabilities.colorControl.hue, 0)
+  light_set_color(driver, device, { args = { color = { hue = hue, saturation = command.args.saturation } } })
+end
+
 -- Reglages Tuya des prises TS011F (attributs du cluster On/Off, cf. Z2M lib/tuya.ts)
 local TUYA_CHILD_LOCK = 0x8000     -- booleen
 local TUYA_INDICATOR_MODE = 0x8001 -- 0 eteint, 1 allume quand eteinte, 2 allume quand allumee, 3 toujours
@@ -736,6 +812,15 @@ local driver_template = {
     },
     [capabilities.refresh.ID] = {
       [capabilities.refresh.commands.refresh.NAME] = refresh_handler,
+    },
+    -- Ruban LED (seul appareil avec ces capacites)
+    [capabilities.switchLevel.ID] = {
+      [capabilities.switchLevel.commands.setLevel.NAME] = light_set_level,
+    },
+    [capabilities.colorControl.ID] = {
+      [capabilities.colorControl.commands.setColor.NAME] = light_set_color,
+      [capabilities.colorControl.commands.setHue.NAME] = light_set_hue,
+      [capabilities.colorControl.commands.setSaturation.NAME] = light_set_saturation,
     },
   },
   zigbee_handlers = {

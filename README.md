@@ -1,6 +1,9 @@
-# Zigbee Luis — driver SmartThings Edge (Tuya + ZLinky TIC)
+# Zigbee Luis — drivers SmartThings Edge (Tuya + ZLinky TIC + Yeelight)
 
-Un seul driver **SmartThings Edge**, open source (Apache-2.0), pour des appareils Zigbee Tuya courants et le module **ZLinky TIC** qui lit un compteur Linky. Il tourne en local sur le hub (SmartThings Station, hubs v2/v3, Aeotec), sans cloud.
+Deux drivers **SmartThings Edge**, open source (Apache-2.0), qui tournent en local sur le hub (SmartThings Station, hubs v2/v3, Aeotec), sans cloud :
+
+- **Zigbee Luis (Tuya et ZLinky)** (dossier racine) : appareils Zigbee Tuya courants et module **ZLinky TIC** qui lit un compteur Linky ;
+- **Yeelight LAN Luis** (`drivers/yeelight-lan/`) : ampoules **Yeelight Wi-Fi** pilotées en local, sans app ni cloud Yeelight. Voir [Ampoules Yeelight (Wi-Fi)](#ampoules-yeelight-wi-fi).
 
 Les échelles, datapoints et attributs viennent du code open source de [Zigbee2MQTT](https://github.com/Koenkk/zigbee-herdsman-converters) et de [Home Assistant (ZHA)](https://github.com/zigpy/zha-device-handlers), comparés aux [drivers officiels SmartThings](https://github.com/SmartThingsCommunity/SmartThingsEdgeDrivers).
 
@@ -9,6 +12,7 @@ Les échelles, datapoints et attributs viennent du code open source de [Zigbee2M
 - [Appareils pris en charge](#appareils-pris-en-charge)
 - [Ce que fait le driver, appareil par appareil](#ce-que-fait-le-driver-appareil-par-appareil)
 - [Ce qu'on voit dans l'app SmartThings](#ce-quon-voit-dans-lapp-smartthings)
+- [Ampoules Yeelight (Wi-Fi)](#ampoules-yeelight-wi-fi)
 - [Module ZLinky TIC (compteur Linky)](#module-zlinky-tic-compteur-linky)
 - [Installation](#installation)
 - [Réglages](#réglages)
@@ -25,8 +29,9 @@ Les échelles, datapoints et attributs viennent du code open source de [Zigbee2M
 | Prise murale sans mesure (BSEED) | `TS011F` / `_TZ3000_o1jzcxou` | ✅ testé |
 | Capteur de luminosité | `TS0222` / `_TZ3000_hy6ncvmw` | ✅ testé |
 | Capteur température / humidité | `ZG-227Z` / `HOBEIAN` | ✅ testé |
-| Ruban LED RGB | `TS0503B` / `_TZ3210_wp1k8xws` | ⚠️ non testé (appareil hors ligne) |
+| Ruban LED RGB | `TS0503B` / `_TZ3210_wp1k8xws` | ✅ testé (commandes acceptées) |
 | Module ZLinky TIC (compteur Linky) | `ZLinky_TIC` / `LiXee` | ⚠️ non testé avec un vrai module |
+| Ampoule Yeelight 1S Color (Wi-Fi) | `color4` (YLDP13YL), driver Yeelight LAN | ✅ testé |
 
 « Testé » veut dire : installé sur une SmartThings Station, valeurs vérifiées dans les logs du hub et dans l'app.
 
@@ -67,8 +72,21 @@ Les réglages Tuya des prises sont les attributs `0x8002` (état après coupure)
 - Corrections de température et d'humidité, et échelle ÷100 / ÷10 si un capteur envoie des valeurs 10 fois trop grandes.
 
 ### Ruban LED RGB — TS0503B
-- Marche/arrêt, **variation** et **couleur**, par les clusters standard On/Off, Level et ColorControl (teinte/saturation), comme Zigbee2MQTT (`tuyaLight({color: true})`).
-- Variation et couleur utilisent les gestionnaires par défaut du SDK SmartThings.
+- Marche/arrêt, **variation** et **couleur**.
+- Les contrôleurs RGB Tuya ont, en mode couleur, leur **propre luminosité interne** : avec les seules commandes standard, la couleur pouvait rester faible même à 100 %. Comme Zigbee2MQTT (`lib/tuya.ts`), le driver envoie la commande Tuya `0x06` du cluster ColorControl (teinte, saturation, luminosité) après la commande `0xF0` (mode RGB), en plus de la commande standard de niveau.
+
+## Ampoules Yeelight (Wi-Fi)
+
+Driver séparé **Yeelight LAN Luis** (`drivers/yeelight-lan/`) : un driver Edge est soit Zigbee, soit réseau local.
+
+- **Prérequis** : activer une fois le **Contrôle LAN** dans l'app Yeelight (ampoule → réglages). Ensuite, l'app Yeelight n'est plus nécessaire, et l'ampoule peut être coupée d'Internet dans le routeur.
+- **Découverte automatique** : dans l'app SmartThings, « Ajouter un appareil » → « Rechercher les appareils à proximité ». Le hub doit être sur le **même réseau** que les ampoules (la recherche multicast ne traverse pas les VLAN). Sinon, réglage **Adresse IP** manuel.
+- **Plusieurs ampoules** : chacune devient un appareil SmartThings avec sa propre connexion.
+- Marche/arrêt, **variation**, **couleur**, **blanc réglable** (1700 – 6500 K), transitions douces réglables.
+- **État en temps réel** : l'ampoule prévient le hub à chaque changement, même avec l'interrupteur mural ou une autre app.
+- **Reconnexion automatique** (ampoule coupée au mur), avec statut en ligne / hors ligne.
+- Protocole Yeelight public : découverte multicast `239.255.255.250:1982`, commandes JSON sur TCP `55443`.
+- Testé avec deux **Yeelight 1S Color** (modèle `color4`).
 
 ## Ce qu'on voit dans l'app SmartThings
 
