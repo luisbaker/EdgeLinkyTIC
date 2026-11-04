@@ -426,14 +426,28 @@ end
 ---------------------------------------------------------------------------
 -- Capteur temperature / humidite ZG-227Z
 ---------------------------------------------------------------------------
+-- Chaque mesure est marquee comme mise a jour (state_change), meme si la valeur
+-- n'a pas change : sinon l'app n'affiche aucune mise a jour et le capteur semble
+-- bloque. Les doublons a moins de 60 s (canal standard + canal Tuya) sont ignores.
+local function emit_measure(device, name, value, event)
+  local key_v, key_t = "last_" .. name .. "_value", "last_" .. name .. "_time"
+  local now = os.time()
+  if device:get_field(key_v) == value and now - (device:get_field(key_t) or 0) < 60 then return end
+  device:set_field(key_v, value)
+  device:set_field(key_t, now)
+  device:emit_event(event)
+end
+
 local function emit_temperature(device, celsius)
-  local c = celsius + pref(device, "tempCorrection", 0)
-  device:emit_event(capabilities.temperatureMeasurement.temperature({ value = round(c, 1), unit = "C" }))
+  local c = round(celsius + pref(device, "tempCorrection", 0), 1)
+  emit_measure(device, "temperature", c,
+    capabilities.temperatureMeasurement.temperature({ value = c, unit = "C" }, { state_change = true }))
 end
 
 local function emit_humidity(device, pct)
-  local h = clamp(pct + pref(device, "humCorrection", 0), 0, 100)
-  device:emit_event(capabilities.relativeHumidityMeasurement.humidity({ value = round(h, 0) }))
+  local h = round(clamp(pct + pref(device, "humCorrection", 0), 0, 100), 0)
+  emit_measure(device, "humidity", h,
+    capabilities.relativeHumidityMeasurement.humidity({ value = h }, { state_change = true }))
 end
 
 -- Clusters standard 0x0402 / 0x0405 : toujours pris en compte, comme le driver officiel
