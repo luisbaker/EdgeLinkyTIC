@@ -1,0 +1,38 @@
+name: yeelight-color
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: switchLevel
+        version: 1
+      - id: colorControl
+        version: 1
+      - id: colorTemperature
+        version: 1
+        config:
+          values:
+            - key: "colorTemperature.value"
+              range: [1700, 6500]
+      - id: refresh
+        version: 1
+    categories:
+      - name: Light
+preferences:
+  - name: "ipAddress"
+    title: "Adresse IP (facultatif)"
+    description: "A remplir seulement si l'ampoule n'est pas trouvee automatiquement (ex. 10.10.20.149)"
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      default: ""
+  - name: "transition"
+    title: "Transition (millisecondes)"
+    description: "Duree des changements de luminosite et de couleur (0 = immediat)"
+    required: false
+    preferenceType: integer
+    definition:
+      minimum: 0
+      maximum: 5000
+      default: 400

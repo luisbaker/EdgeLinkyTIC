@@ -1,0 +1,7 @@
+name: 'Yeelight LAN Luis'
+packageKey: 'yeelight-lan-luis'
+permissions:
+  lan: {}
+  discovery: {}
+description: "Ampoules Yeelight Wi-Fi pilotees en local (Controle LAN), sans app ni cloud Yeelight. github.com/luisbaker/EdgeLinkyTIC"
+vendorSupportInformation: "https://github.com/luisbaker/EdgeLinkyTIC/issues"
