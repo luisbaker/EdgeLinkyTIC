@@ -17,6 +17,8 @@ components:
     version: 1
   - id: "smoothcommon59531.linkyInfos"
     version: 1
+  - id: "smoothcommon59531.periodEnergy"
+    version: 1
   categories:
   - name: CurbPowerMeter
 - id: phase1
@@ -57,3 +59,13 @@ components:
     version: 1
   - id: signalStrength
     version: 1
+preferences:
+- name: "utcOffset"
+  title: "Decalage horaire (heures)"
+  description: "Pour couper les journees a minuit : 1 en hiver, 2 en ete (France)"
+  required: false
+  preferenceType: integer
+  definition:
+    minimum: -12
+    maximum: 14
+    default: 1

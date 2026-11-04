@@ -48,6 +48,8 @@ for phases in mono tri; do
         echo "    version: 1"
         echo "  - id: \"smoothcommon59531.linkyInfos\""
         echo "    version: 1"
+        echo "  - id: \"smoothcommon59531.periodEnergy\""
+        echo "    version: 1"
         echo "  categories:"
         echo "  - name: CurbPowerMeter"
         if [ "$phases" = tri ]; then
@@ -69,6 +71,8 @@ for phases in mono tri; do
             echo "  label: \"Index $i\""
             echo "  capabilities:"
             echo "  - id: energyMeter"
+            echo "    version: 1"
+            echo "  - id: \"smoothcommon59531.periodEnergy\""
             echo "    version: 1"
           done
         fi
@@ -92,6 +96,16 @@ for phases in mono tri; do
         echo "    version: 1"
         echo "  - id: signalStrength"
         echo "    version: 1"
+        echo "preferences:"
+        echo "- name: \"utcOffset\""
+        echo "  title: \"Decalage horaire (heures)\""
+        echo "  description: \"Pour couper les journees a minuit : 1 en hiver, 2 en ete (France)\""
+        echo "  required: false"
+        echo "  preferenceType: integer"
+        echo "  definition:"
+        echo "    minimum: -12"
+        echo "    maximum: 14"
+        echo "    default: 1"
       } > "$f"
     done
   done

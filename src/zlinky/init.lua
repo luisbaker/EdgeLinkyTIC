@@ -20,6 +20,7 @@ local c_linkySerial         = capabilities["stormachieve25639.linkySerial"]
 local c_subscription        = capabilities["stormachieve25639.subscription"]
 local c_instantaneous       = capabilities["stormachieve25639.instantaneous"]
 local c_linkyInfos          = capabilities["smoothcommon59531.linkyInfos"]
+local c_periodEnergy        = capabilities["smoothcommon59531.periodEnergy"]
 
 local CLUSTER_METERING    = clusters.SimpleMetering.ID          -- 0x0702
 local CLUSTER_METER_ID    = 0x0B01                              -- Meter Identification
@@ -231,12 +232,39 @@ local function report_consumption(device, energy_wh)
   device:set_field(F_REPORT_E, report.energy_wh, PERSIST)
 end
 
+-- Consommation par période (capacité smoothcommon59531.periodEnergy) sur le total
+-- et sur chaque index. Remise à zéro à minuit, le lundi et le 1er du mois (heure
+-- locale = UTC + réglage « Décalage horaire »). Part de 0 au premier relevé.
+local PERIODS = {
+  { attribute = "aujourdhui", key = function(t) return os.date("!%Y-%m-%d", t) end },
+  { attribute = "semaine",    key = function(t) return os.date("!%Y-S%W", t) end },
+  { attribute = "mois",       key = function(t) return os.date("!%Y-%m", t) end },
+}
+
+local function update_periods(device, component_id, kwh)
+  if device.profile.components[component_id] == nil then return end
+  local offset = tonumber(device.preferences and device.preferences.utcOffset) or 1
+  local local_time = os.time() + offset * 3600
+  for _, p in ipairs(PERIODS) do
+    local key = p.key(local_time)
+    local key_field = "period_key_" .. component_id .. "_" .. p.attribute
+    local base_field = "period_base_" .. component_id .. "_" .. p.attribute
+    if device:get_field(key_field) ~= key or device:get_field(base_field) == nil then
+      device:set_field(key_field, key, PERSIST)
+      device:set_field(base_field, kwh, PERSIST)
+    end
+    local used = math.max(0, kwh - device:get_field(base_field))
+    emit_to(device, component_id, c_periodEnergy[p.attribute]({ value = math.floor(used * 1000 + 0.5) / 1000, unit = "kWh" }))
+  end
+end
+
 local function emit_total_energy(device)
   local energy_wh = logic.total_energy_wh(device:get_field(F_TOTAL), device:get_field(F_TIERS))
   if energy_wh == nil then
     return
   end
   emit_to(device, "main", capabilities.energyMeter.energy({ value = energy_wh / 1000, unit = "kWh" }))
+  update_periods(device, "main", energy_wh / 1000)
   report_consumption(device, energy_wh)
 end
 
@@ -252,6 +280,7 @@ local function tier_handler(index)
     device:set_field(F_TIERS, tiers, PERSIST)
 
     emit_to(device, "index" .. index, capabilities.energyMeter.energy({ value = value.value / 1000, unit = "kWh" }))
+    update_periods(device, "index" .. index, value.value / 1000)
 
     if value.value > 0 and index > (device:get_field(F_HIGHEST_INDEX) or 0) then
       device:set_field(F_HIGHEST_INDEX, index, PERSIST)
