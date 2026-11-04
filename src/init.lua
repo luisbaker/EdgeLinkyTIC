@@ -159,7 +159,7 @@ end
 local function start_polling(device)
   local old = device:get_field(POLL_TIMER)
   if old ~= nil then device.thread:cancel_timer(old) end
-  local interval = pref(device, "pollInterval", 120)
+  local interval = pref(device, "pollInterval", 300)
   local timer = device.thread:call_on_schedule(interval, function() plug_refresh(device) end, "plug_poll")
   device:set_field(POLL_TIMER, timer)
   log.info(string.format("Prise %s : lecture toutes les %d s", tostring(device.label), interval))
@@ -248,10 +248,40 @@ local function probe_metering(driver, device, raw)
   return true
 end
 
+-- Faux zeros : certaines TS011F annoncent 0 W et 0 A pendant ~5 s a intervalle
+-- fixe (constate : toutes les 268-270 s, avec des appareils allumes en continu).
+-- Un 0 recu alors que la prise est allumee n'est affiche que s'il est confirme
+-- par une deuxieme lecture 10 s plus tard ; sinon il est ignore.
+local ZERO_CONFIRM_DELAY_S = 10
+local ZERO_CONFIRM_WINDOW_S = 30
+
+local function is_switched_on(device)
+  return device:get_latest_state("main", capabilities.switch.ID, capabilities.switch.switch.NAME) == "on"
+end
+
+-- Renvoie true si la valeur nulle doit etre retenue (en attente de confirmation).
+local function hold_unconfirmed_zero(device, field, value, read_attribute)
+  if value ~= 0 or not is_switched_on(device) then
+    device:set_field(field, nil)
+    return false
+  end
+  local seen = device:get_field(field)
+  local now = os.time()
+  if seen ~= nil and now - seen <= ZERO_CONFIRM_WINDOW_S then
+    device:set_field(field, nil)
+    return false -- deuxieme 0 : confirme, on l'affiche
+  end
+  device:set_field(field, now)
+  device.thread:call_with_delay(ZERO_CONFIRM_DELAY_S, function() device:send(read_attribute:read(device)) end)
+  log.debug(tostring(device.label) .. " : 0 recu, confirmation dans " .. ZERO_CONFIRM_DELAY_S .. " s")
+  return true
+end
+
 local function active_power_handler(driver, device, value, zb_rx)
   if probe_metering(driver, device, value.value) then return end
   local w = scale(device, POWER_MULT, POWER_DIV, value.value)
   if w < 0 then w = 0 end
+  if hold_unconfirmed_zero(device, "zero_power_seen", w, ElectricalMeasurement.attributes.ActivePower) then return end
   device:emit_event(capabilities.powerMeter.power({ value = round(w, 1), unit = "W" }))
 end
 
@@ -263,6 +293,7 @@ end
 
 local function current_handler(driver, device, value, zb_rx)
   if not is_metered_plug(device) then return end
+  if hold_unconfirmed_zero(device, "zero_current_seen", value.value, ElectricalMeasurement.attributes.RMSCurrent) then return end
   device:emit_event(capabilities.currentMeasurement.current({ value = round(value.value / CURRENT_DIVISOR, 3), unit = "A" }))
 end
 
