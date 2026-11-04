@@ -33,3 +33,8 @@ zigbeeManufacturer:
     manufacturer: _TZ3000_o1jzcxou
     model: TS011F
     deviceProfileName: plug-tuya-basic
+  - id: "_TZ3210_wp1k8xws/TS0503B"
+    deviceLabel: "Ruban LED RGB"
+    manufacturer: _TZ3210_wp1k8xws
+    model: TS0503B
+    deviceProfileName: rgb-light-tuya

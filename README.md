@@ -9,12 +9,14 @@ Un seul driver SmartThings Edge, open source (Apache-2.0), pour :
 | Capteur de luminosité | Tuya `TS0222` / `_TZ3000_hy6ncvmw` | `src/init.lua` |
 | Capteur température / humidité | HOBEIAN `ZG-227Z` | `src/init.lua` |
 | Prise murale sans mesure (BSEED) | Tuya `TS011F` / `_TZ3000_o1jzcxou` | `src/init.lua` |
+| Ruban LED RGB | Tuya `TS0503B` / `_TZ3210_wp1k8xws` | `src/init.lua` |
 
 ## Appareils Tuya
 
 - **Prise TS011F** : marche/arrêt, puissance (W), énergie (kWh), tension (V), courant (A), rapports **SmartThings Energy** toutes les 15 min. La tuile affiche les watts (présentation `presentation/plug.json`). Lecture de la prise toutes les 120 s (réglable).
 - **Prises TS011F (toutes)** : réglages Tuya dans l'app : état après coupure de courant, mode du voyant, verrouillage enfant (attributs 0x8002, 0x8001, 0x8000 du cluster On/Off). Envoyés à la prise quand tu les changes.
 - **BSEED TS011F `_TZ3000_o1jzcxou`** : prise sans mesure de consommation, profil marche/arrêt seul.
+- **Ruban LED TS0503B** : marche/arrêt, variation, couleur (clusters standard On/Off, Level, ColorControl en teinte/saturation, comme Zigbee2MQTT). Variation et couleur utilisent les gestionnaires par défaut du SDK SmartThings.
 - **TS0222** : lit le canal Tuya 0xEF00 (DP 2 = lux, DP 4 = batterie), avec repli sur le cluster standard 0x0400. Anti-spam réglable (intervalle minimum, changement minimum en %), multiplicateur de correction.
 - **ZG-227Z** : lit le canal Tuya 0xEF00 (DP 1 = température ÷10, DP 2 = humidité, DP 4 = batterie), avec repli sur les clusters standard. Corrections de température et d'humidité, intervalle d'envoi réglable (5 à 60 min, appliqué au réveil du capteur).
 - Échelles et datapoints repris de [Zigbee2MQTT](https://github.com/Koenkk/zigbee-herdsman-converters).

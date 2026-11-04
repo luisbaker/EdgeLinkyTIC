@@ -11,6 +11,7 @@
 
 local capabilities = require "st.capabilities"
 local ZigbeeDriver = require "st.zigbee"
+local defaults = require "st.zigbee.defaults"
 local clusters = require "st.zigbee.zcl.clusters"
 local device_management = require "st.zigbee.device_management"
 local cluster_base = require "st.zigbee.cluster_base"
@@ -64,6 +65,7 @@ local function is_metered_plug(device)
   return is_plug(device) and not NON_METERED_PLUGS[device:get_manufacturer()]
 end
 local function is_lux(device) return device:get_model() == "TS0222" end
+local function is_light(device) return device:get_model() == "TS0503B" end
 local function is_temp(device) return device:get_model() == "ZG-227Z" end
 
 local function pref(device, name, default)
@@ -219,6 +221,31 @@ local function configure_basic_plug(driver, device)
   bind(driver, device, OnOff.ID)
   device:send(OnOff.attributes.OnOff:configure_reporting(device, 0, 300))
   plug_refresh(device)
+end
+
+---------------------------------------------------------------------------
+-- Ruban LED RGB TS0503B : clusters standard (comme Z2M tuyaLight({color: true}))
+-- Variation et couleur : gestionnaires par defaut du SDK SmartThings.
+---------------------------------------------------------------------------
+local Level = clusters.Level
+local ColorControl = clusters.ColorControl
+
+local function light_refresh(device)
+  device:send(OnOff.attributes.OnOff:read(device))
+  device:send(Level.attributes.CurrentLevel:read(device))
+  device:send(ColorControl.attributes.CurrentHue:read(device))
+  device:send(ColorControl.attributes.CurrentSaturation:read(device))
+end
+
+local function configure_light(driver, device)
+  bind(driver, device, OnOff.ID)
+  bind(driver, device, Level.ID)
+  bind(driver, device, ColorControl.ID)
+  device:send(OnOff.attributes.OnOff:configure_reporting(device, 0, 300))
+  device:send(Level.attributes.CurrentLevel:configure_reporting(device, 1, 3600, 1))
+  device:send(ColorControl.attributes.CurrentHue:configure_reporting(device, 1, 3600, 0x0010))
+  device:send(ColorControl.attributes.CurrentSaturation:configure_reporting(device, 1, 3600, 0x0010))
+  light_refresh(device)
 end
 
 -- Reglages Tuya des prises TS011F (attributs du cluster On/Off, cf. Z2M lib/tuya.ts)
@@ -442,6 +469,8 @@ local function refresh_handler(driver, device, command)
     plug_refresh(device)
   elseif is_temp(device) then
     sensor_refresh(device)
+  elseif is_light(device) then
+    light_refresh(device)
   end
 end
 
@@ -455,6 +484,8 @@ local function do_configure(driver, device)
     configure_plug(driver, device)
   elseif is_plug(device) then
     configure_basic_plug(driver, device)
+  elseif is_light(device) then
+    configure_light(driver, device)
   elseif is_lux(device) then
     configure_lux(driver, device)
   elseif is_temp(device) then
@@ -472,6 +503,7 @@ end
 
 local function device_added(driver, device)
   if is_plug(device) then plug_refresh(device) end
+  if is_light(device) then light_refresh(device) end
 end
 
 local function info_changed(driver, device, event, args)
@@ -512,6 +544,8 @@ local driver_template = {
     capabilities.relativeHumidityMeasurement,
     capabilities.battery,
     capabilities.refresh,
+    capabilities.switchLevel,    -- ruban LED
+    capabilities.colorControl,   -- ruban LED
     capabilities.signalStrength, -- ZLinky
   },
   -- Repris tel quel du driver ZLinky d'origine
@@ -579,6 +613,10 @@ local driver_template = {
     driverSwitched = driver_switched,
   },
 }
+
+-- Variation et couleur du ruban LED : gestionnaires par defaut du SDK
+-- (uniquement pour ces 2 capacites, nos propres gestionnaires restent prioritaires).
+defaults.register_for_default_handlers(driver_template, { capabilities.switchLevel, capabilities.colorControl })
 
 local driver = ZigbeeDriver("zigbee-tuya-luis", driver_template)
 driver:run()
