@@ -55,6 +55,14 @@ local POWER_MULT, POWER_DIV = "power_mult", "power_div"
 -- Utilitaires
 ---------------------------------------------------------------------------
 local function is_plug(device) return device:get_model() == "TS011F" end
+
+-- Prises TS011F sans mesure de consommation (Z2M : TS011F_plug_2)
+local NON_METERED_PLUGS = {
+  ["_TZ3000_o1jzcxou"] = true, -- BSEED prise murale
+}
+local function is_metered_plug(device)
+  return is_plug(device) and not NON_METERED_PLUGS[device:get_manufacturer()]
+end
 local function is_lux(device) return device:get_model() == "TS0222" end
 local function is_temp(device) return device:get_model() == "ZG-227Z" end
 
@@ -98,6 +106,7 @@ end
 ---------------------------------------------------------------------------
 local function plug_refresh(device)
   device:send(OnOff.attributes.OnOff:read(device))
+  if not is_metered_plug(device) then return end
   device:send(ElectricalMeasurement.attributes.ActivePower:read(device))
   device:send(ElectricalMeasurement.attributes.RMSVoltage:read(device))
   device:send(ElectricalMeasurement.attributes.RMSCurrent:read(device))
@@ -204,6 +213,39 @@ local function configure_plug(driver, device)
   device:send(ElectricalMeasurement.attributes.RMSCurrent:configure_reporting(device, 5, 3600, 50))
   device:send(ElectricalMeasurement.attributes.ActivePower:configure_reporting(device, 5, 3600, 10))
   plug_refresh(device)
+end
+
+local function configure_basic_plug(driver, device)
+  bind(driver, device, OnOff.ID)
+  device:send(OnOff.attributes.OnOff:configure_reporting(device, 0, 300))
+  plug_refresh(device)
+end
+
+-- Reglages Tuya des prises TS011F (attributs du cluster On/Off, cf. Z2M lib/tuya.ts)
+local TUYA_CHILD_LOCK = 0x8000     -- booleen
+local TUYA_INDICATOR_MODE = 0x8001 -- 0 eteint, 1 allume quand eteinte, 2 allume quand allumee, 3 toujours
+local TUYA_POWER_ON = 0x8002       -- 0 eteinte, 1 allumee, 2 etat precedent
+
+local function write_onoff_attribute(device, attribute, data_type, value)
+  device:send(cluster_base.write_attribute(device,
+    data_types.ClusterId(OnOff.ID),
+    data_types.AttributeId(attribute),
+    data_types.validate_or_build_type(value, data_type)))
+end
+
+-- N'ecrit que les reglages modifies : la prise garde ses propres reglages
+-- tant que l'utilisateur n'y touche pas.
+local function apply_plug_settings(device, old)
+  local p = device.preferences or {}
+  if p.powerOnBehavior ~= nil and p.powerOnBehavior ~= old.powerOnBehavior then
+    write_onoff_attribute(device, TUYA_POWER_ON, data_types.Enum8, tonumber(p.powerOnBehavior))
+  end
+  if p.indicatorMode ~= nil and p.indicatorMode ~= old.indicatorMode then
+    write_onoff_attribute(device, TUYA_INDICATOR_MODE, data_types.Enum8, tonumber(p.indicatorMode))
+  end
+  if p.childLock ~= nil and p.childLock ~= old.childLock then
+    write_onoff_attribute(device, TUYA_CHILD_LOCK, data_types.Boolean, p.childLock)
+  end
 end
 
 ---------------------------------------------------------------------------
@@ -409,8 +451,10 @@ end
 local function do_configure(driver, device)
   log.info("Configuration de " .. tostring(device.label) .. " (" .. tostring(device:get_model()) .. ")")
   tuya_magic(device)
-  if is_plug(device) then
+  if is_metered_plug(device) then
     configure_plug(driver, device)
+  elseif is_plug(device) then
+    configure_basic_plug(driver, device)
   elseif is_lux(device) then
     configure_lux(driver, device)
   elseif is_temp(device) then
@@ -420,7 +464,7 @@ local function do_configure(driver, device)
 end
 
 local function device_init(driver, device)
-  if is_plug(device) then
+  if is_metered_plug(device) then
     start_polling(device)
     start_energy_reports(device)
   end
@@ -432,8 +476,11 @@ end
 
 local function info_changed(driver, device, event, args)
   local old = (args and args.old_st_store and args.old_st_store.preferences) or {}
-  if is_plug(device) and old.pollInterval ~= device.preferences.pollInterval then
+  if is_metered_plug(device) and old.pollInterval ~= device.preferences.pollInterval then
     start_polling(device)
+  end
+  if is_plug(device) then
+    apply_plug_settings(device, old)
   end
   if is_lux(device) and old.luxMinInterval ~= device.preferences.luxMinInterval then
     device:send(Illuminance.attributes.MeasuredValue:configure_reporting(device, device.preferences.luxMinInterval, 3600, 500))
