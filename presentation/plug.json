@@ -46,39 +46,6 @@
                                      ]
                        },
                        {
-                           "component":  "today",
-                           "capability":  "energyMeter",
-                           "version":  1,
-                           "values":  [
-
-                                      ],
-                           "patch":  [
-
-                                     ]
-                       },
-                       {
-                           "component":  "week",
-                           "capability":  "energyMeter",
-                           "version":  1,
-                           "values":  [
-
-                                      ],
-                           "patch":  [
-
-                                     ]
-                       },
-                       {
-                           "component":  "month",
-                           "capability":  "energyMeter",
-                           "version":  1,
-                           "values":  [
-
-                                      ],
-                           "patch":  [
-
-                                     ]
-                       },
-                       {
                            "component":  "main",
                            "capability":  "energyMeter",
                            "version":  1,
@@ -114,6 +81,17 @@
                        {
                            "component":  "main",
                            "capability":  "currentMeasurement",
+                           "version":  1,
+                           "values":  [
+
+                                      ],
+                           "patch":  [
+
+                                     ]
+                       },
+                       {
+                           "component":  "main",
+                           "capability":  "signalStrength",
                            "version":  1,
                            "values":  [
 
@@ -246,36 +224,8 @@
                                                             ]
                                           },
                                           {
-                                              "component":  "today",
-                                              "capability":  "energyMeter",
-                                              "version":  1,
-                                              "values":  [
-
-                                                         ],
-                                              "patch":  [
-
-                                                        ],
-                                              "exclusion":  [
-
-                                                            ]
-                                          },
-                                          {
-                                              "component":  "week",
-                                              "capability":  "energyMeter",
-                                              "version":  1,
-                                              "values":  [
-
-                                                         ],
-                                              "patch":  [
-
-                                                        ],
-                                              "exclusion":  [
-
-                                                            ]
-                                          },
-                                          {
-                                              "component":  "month",
-                                              "capability":  "energyMeter",
+                                              "component":  "main",
+                                              "capability":  "signalStrength",
                                               "version":  1,
                                               "values":  [
 

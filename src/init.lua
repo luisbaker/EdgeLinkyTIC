@@ -261,37 +261,9 @@ local function current_handler(driver, device, value, zb_rx)
   device:emit_event(capabilities.currentMeasurement.current({ value = round(value.value / CURRENT_DIVISOR, 3), unit = "A" }))
 end
 
--- Consommation par periode, affichee sur la page de la prise (composants
--- "today", "week", "month" du profil). Remise a zero a minuit, le lundi et le 1er.
-local PERIODS = {
-  { component = "today", key = function(t) return os.date("!%Y-%m-%d", t) end },
-  { component = "week",  key = function(t) return os.date("!%Y-S%W", t) end }, -- semaine commencant le lundi
-  { component = "month", key = function(t) return os.date("!%Y-%m", t) end },
-}
-
-local function update_periods(device, kwh)
-  local local_time = os.time() + pref(device, "utcOffset", 1) * 3600
-  for _, p in ipairs(PERIODS) do
-    local component = device.profile.components[p.component]
-    if component ~= nil then
-      local key = p.key(local_time)
-      local key_field = "period_key_" .. p.component
-      local base_field = "period_base_" .. p.component
-      if device:get_field(key_field) ~= key or device:get_field(base_field) == nil then
-        device:set_field(key_field, key, { persist = true })
-        device:set_field(base_field, kwh, { persist = true })
-      end
-      local used = math.max(0, kwh - device:get_field(base_field))
-      device:emit_component_event(component, capabilities.energyMeter.energy({ value = round(used, 2), unit = "kWh" }))
-    end
-  end
-end
-
 local function energy_handler(driver, device, value, zb_rx)
   if probe_metering(driver, device, value.value) then return end
-  local kwh = round(value.value / ENERGY_DIVISOR, 2)
-  device:emit_event(capabilities.energyMeter.energy({ value = kwh, unit = "kWh" }))
-  update_periods(device, kwh)
+  device:emit_event(capabilities.energyMeter.energy({ value = round(value.value / ENERGY_DIVISOR, 2), unit = "kWh" }))
 end
 
 local function configure_plug(driver, device)
@@ -730,6 +702,37 @@ local driver_template = {
     driverSwitched = driver_switched,
   },
 }
+
+-- Qualite du signal Zigbee (LQI, RSSI) publiee a partir de n'importe quel message
+-- recu, au plus toutes les 5 min par appareil (comme le sous-driver ZLinky).
+local SIGNAL_INTERVAL_S = 300
+local last_signal = {}
+local function emit_signal(device, zb_rx)
+  if zb_rx == nil or zb_rx.lqi == nil or zb_rx.rssi == nil then return end
+  if not device:supports_capability_by_id(capabilities.signalStrength.ID) then return end
+  local now = os.time()
+  if last_signal[device.id] and now - last_signal[device.id] < SIGNAL_INTERVAL_S then return end
+  last_signal[device.id] = now
+  device:emit_event(capabilities.signalStrength.lqi(zb_rx.lqi.value))
+  device:emit_event(capabilities.signalStrength.rssi({ value = zb_rx.rssi.value, unit = "dBm" }))
+end
+
+for _, cluster_handlers in pairs(driver_template.zigbee_handlers.attr) do
+  for attribute, handler in pairs(cluster_handlers) do
+    cluster_handlers[attribute] = function(driver, device, value, zb_rx)
+      emit_signal(device, zb_rx)
+      handler(driver, device, value, zb_rx)
+    end
+  end
+end
+for _, cluster_handlers in pairs(driver_template.zigbee_handlers.cluster) do
+  for command, handler in pairs(cluster_handlers) do
+    cluster_handlers[command] = function(driver, device, zb_rx)
+      emit_signal(device, zb_rx)
+      handler(driver, device, zb_rx)
+    end
+  end
+end
 
 -- Variation et couleur du ruban LED : gestionnaires par defaut du SDK
 -- (uniquement pour ces 2 capacites, nos propres gestionnaires restent prioritaires).

@@ -8,6 +8,8 @@ components:
         version: 1
       - id: firmwareUpdate
         version: 1
+      - id: signalStrength
+        version: 1
     categories:
       - name: LightSensor
 preferences:

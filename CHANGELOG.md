@@ -2,6 +2,10 @@
 
 ## Non publié
 
+### Signal Zigbee sur tous les appareils
+- Qualité du signal (LQI, RSSI, capacité `signalStrength`) sur tous les appareils Tuya, publiée à partir de n'importe quel message reçu, au plus toutes les 5 minutes (comme le ZLinky).
+- Prise TS011F : les sections Aujourd'hui / Cette semaine / Ce mois-ci ont été retirées de la page.
+
 ### ZLinky : infos tarifaires (comme Zigbee2MQTT)
 - Nouvelle capacité `smoothcommon59531.linkyInfos` (fichiers dans `capabilities/linky-infos*.json`) sur le composant `main` : période tarifaire en cours (PTEC / LTARF), index en cours (NTARF), couleur Tempo aujourd'hui et demain (DEMAIN / registre STGE), puissance max du jour (SMAXSN), intensité max (IMAX), message du fournisseur (MSG1).
 - Ces attributs ne sont pas envoyés spontanément par le module : ils sont relus toutes les 5 minutes.
