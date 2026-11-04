@@ -34,7 +34,7 @@ preferences:
     definition:
       minimum: 10
       maximum: 3600
-      default: 120
+      default: 300
   - name: "powerOnBehavior"
     title: "Apres une coupure de courant"
     description: "Etat de la prise quand le courant revient. Envoye a la prise quand tu le changes."
