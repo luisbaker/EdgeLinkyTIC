@@ -41,10 +41,22 @@ local HAS_BATTERY_PCT = "has_battery_pct"
 local USES_TUYA_LUX = "uses_tuya_lux"
 local USES_TUYA_TEMP = "uses_tuya_temp"
 local USES_TUYA_HUM = "uses_tuya_hum"
-local CONFIGURED_INTERVAL = "configured_interval"
+local CONFIGURED_INTERVAL = "configured_interval_v2" -- v2 : force un vrai envoi (v1 etait note a tort)
+
+-- Ces capteurs envoient par le canal standard ET (plus rarement) par le canal Tuya.
+-- Apres une mesure Tuya, le canal standard est ignore pendant 10 min seulement
+-- (evite les doublons), puis de nouveau pris en compte.
+local TUYA_PRIORITY_S = 600
+local function tuya_recent(device, field)
+  local t = device:get_field(field)
+  return type(t) == "number" and (os.time() - t) < TUYA_PRIORITY_S
+end
 
 -- Defini plus bas : envoie la config au capteur quand il est reveille
 local maybe_reconfigure
+-- Defini plus bas : passe une prise "sans mesure" sur le profil avec consommation
+local enable_metering
+local METERING_DETECTED = "metering_detected"
 
 -- Echelles de la prise (Z2M TS011F_plug_1). Tension et puissance : lues sur la prise.
 local CURRENT_DIVISOR = 1000 -- mA -> A
@@ -57,12 +69,16 @@ local POWER_MULT, POWER_DIV = "power_mult", "power_div"
 ---------------------------------------------------------------------------
 local function is_plug(device) return device:get_model() == "TS011F" end
 
--- Prises TS011F sans mesure de consommation (Z2M : TS011F_plug_2)
+-- Prises TS011F sans mesure de consommation (Z2M : TS011F_plug_2).
+-- Certaines versions materielles mesurent quand meme : le driver le detecte
+-- (voir enable_metering) et bascule alors sur le profil avec consommation.
 local NON_METERED_PLUGS = {
   ["_TZ3000_o1jzcxou"] = true, -- BSEED prise murale
 }
 local function is_metered_plug(device)
-  return is_plug(device) and not NON_METERED_PLUGS[device:get_manufacturer()]
+  if not is_plug(device) then return false end
+  if device:get_field(METERING_DETECTED) then return true end
+  return not NON_METERED_PLUGS[device:get_manufacturer()]
 end
 local function is_lux(device) return device:get_model() == "TS0222" end
 local function is_light(device) return device:get_model() == "TS0503B" end
@@ -99,6 +115,17 @@ local function tuya_magic(device)
   if not ok then log.warn("Lecture 0xFFFE impossible : " .. tostring(err)) end
 end
 
+-- Demande a l'appareil de verifier s'il existe une mise a jour firmware
+-- (comme les drivers officiels, ex. Inovelli). L'appareil interroge alors la
+-- Station, qui ne propose que les firmwares deposes chez Samsung.
+local TUYA_MFG_CODE = 0x1141
+local function ota_image_notify(device)
+  local ok, err = pcall(function()
+    device:send(clusters.OTAUpgrade.commands.ImageNotify(device, 0x00, 100, TUYA_MFG_CODE, 0xFFFF, 0xFFFFFFFF))
+  end)
+  if not ok then log.warn("ImageNotify impossible : " .. tostring(err)) end
+end
+
 local function emit_battery(device, pct)
   device:emit_event(capabilities.battery.battery(clamp(math.floor(pct + 0.5), 0, 100)))
 end
@@ -108,7 +135,12 @@ end
 ---------------------------------------------------------------------------
 local function plug_refresh(device)
   device:send(OnOff.attributes.OnOff:read(device))
-  if not is_metered_plug(device) then return end
+  if not is_metered_plug(device) then
+    -- Sonde : si la prise repond avec une vraie mesure, on active la consommation
+    device:send(ElectricalMeasurement.attributes.ActivePower:read(device))
+    device:send(SimpleMetering.attributes.CurrentSummationDelivered:read(device))
+    return
+  end
   device:send(ElectricalMeasurement.attributes.ActivePower:read(device))
   device:send(ElectricalMeasurement.attributes.RMSVoltage:read(device))
   device:send(ElectricalMeasurement.attributes.RMSCurrent:read(device))
@@ -138,18 +170,28 @@ local LAST_REPORT_WH = "last_report_wh"
 local LAST_REPORT_TIME = "last_report_time"
 local ENERGY_REPORT_INTERVAL = 15 * 60
 
+local function iso_time(t)
+  return os.date("!%Y-%m-%dT%H:%M:%SZ", t)
+end
+
+-- Meme format que les appareils Samsung (ex. lave-linge) : periode start/end,
+-- energie totale et consommee sur la periode (Wh), puissance actuelle (W).
 local function emit_consumption_report(device)
   local kwh = device:get_latest_state("main", capabilities.energyMeter.ID, capabilities.energyMeter.energy.NAME)
   if kwh == nil then return end
   local wh = kwh * 1000
   local now = os.time()
   local last_wh = device:get_field(LAST_REPORT_WH)
+  local last_t = device:get_field(LAST_REPORT_TIME) or (now - ENERGY_REPORT_INTERVAL)
   local delta = 0
   if last_wh ~= nil and wh >= last_wh then delta = wh - last_wh end
-  -- Meme format que les drivers officiels SmartThings (valeurs en Wh)
+  local power = device:get_latest_state("main", capabilities.powerMeter.ID, capabilities.powerMeter.power.NAME) or 0
   device:emit_event(capabilities.powerConsumptionReport.powerConsumption({
+    start = iso_time(last_t),
+    ["end"] = iso_time(now - 1),
     energy = round(wh, 1),
     deltaEnergy = round(delta, 1),
+    power = power,
   }))
   device:set_field(LAST_REPORT_WH, wh, { persist = true })
   device:set_field(LAST_REPORT_TIME, now, { persist = true })
@@ -160,6 +202,12 @@ local function start_energy_reports(device)
   if old ~= nil then device.thread:cancel_timer(old) end
   local timer = device.thread:call_on_schedule(ENERGY_REPORT_INTERVAL, function() emit_consumption_report(device) end, "energy_report")
   device:set_field(ENERGY_TIMER, timer)
+  -- Premier rapport 1 min apres le demarrage si le dernier date de plus de 15 min
+  -- (sinon chaque redemarrage du driver repoussait le rapport de 15 min).
+  local last_t = device:get_field(LAST_REPORT_TIME) or 0
+  if os.time() - last_t >= ENERGY_REPORT_INTERVAL then
+    device.thread:call_with_delay(60, function() emit_consumption_report(device) end, "energy_first_report")
+  end
 end
 
 local function scale(device, mult_field, div_field, raw)
@@ -184,22 +232,37 @@ local function onoff_handler(driver, device, value, zb_rx)
   end
 end
 
+-- Prise declaree "sans mesure" qui renvoie une vraie valeur (> 0) : elle mesure.
+local function probe_metering(driver, device, raw)
+  if is_metered_plug(device) then return false end
+  if type(raw) == "number" and raw > 0 then
+    enable_metering(driver, device)
+  else
+    log.debug(tostring(device.label) .. " : pas de mesure de consommation (valeur " .. tostring(raw) .. ")")
+  end
+  return true
+end
+
 local function active_power_handler(driver, device, value, zb_rx)
+  if probe_metering(driver, device, value.value) then return end
   local w = scale(device, POWER_MULT, POWER_DIV, value.value)
   if w < 0 then w = 0 end
   device:emit_event(capabilities.powerMeter.power({ value = round(w, 1), unit = "W" }))
 end
 
 local function voltage_handler(driver, device, value, zb_rx)
+  if not is_metered_plug(device) then return end
   local v = scale(device, VOLT_MULT, VOLT_DIV, value.value)
   device:emit_event(capabilities.voltageMeasurement.voltage({ value = round(v, 1), unit = "V" }))
 end
 
 local function current_handler(driver, device, value, zb_rx)
+  if not is_metered_plug(device) then return end
   device:emit_event(capabilities.currentMeasurement.current({ value = round(value.value / CURRENT_DIVISOR, 3), unit = "A" }))
 end
 
 local function energy_handler(driver, device, value, zb_rx)
+  if probe_metering(driver, device, value.value) then return end
   device:emit_event(capabilities.energyMeter.energy({ value = round(value.value / ENERGY_DIVISOR, 2), unit = "kWh" }))
 end
 
@@ -215,6 +278,16 @@ local function configure_plug(driver, device)
   device:send(ElectricalMeasurement.attributes.RMSCurrent:configure_reporting(device, 5, 3600, 50))
   device:send(ElectricalMeasurement.attributes.ActivePower:configure_reporting(device, 5, 3600, 10))
   plug_refresh(device)
+end
+
+enable_metering = function(driver, device)
+  if device:get_field(METERING_DETECTED) then return end
+  log.info(tostring(device.label) .. " : mesure de consommation detectee, passage au profil avec consommation")
+  device:set_field(METERING_DETECTED, true, { persist = true })
+  device:try_update_metadata({ profile = "plug-power-energy" })
+  configure_plug(driver, device)
+  start_polling(device)
+  start_energy_reports(device)
 end
 
 local function configure_basic_plug(driver, device)
@@ -303,7 +376,7 @@ end
 
 -- Cluster standard 0x0400 (utilise seulement si le canal Tuya n'envoie rien)
 local function lux_handler(driver, device, value, zb_rx)
-  if device:get_field(USES_TUYA_LUX) then return end
+  if tuya_recent(device, USES_TUYA_LUX) then return end
   local raw = value.value
   if raw == 0xFFFF then return end -- valeur invalide
   local lux
@@ -325,20 +398,34 @@ end
 ---------------------------------------------------------------------------
 -- Capteur temperature / humidite ZG-227Z
 ---------------------------------------------------------------------------
+-- Chaque mesure est marquee comme mise a jour (state_change), meme si la valeur
+-- n'a pas change : sinon l'app n'affiche aucune mise a jour et le capteur semble
+-- bloque. Les doublons a moins de 60 s (canal standard + canal Tuya) sont ignores.
+local function emit_measure(device, name, value, event)
+  local key_v, key_t = "last_" .. name .. "_value", "last_" .. name .. "_time"
+  local now = os.time()
+  if device:get_field(key_v) == value and now - (device:get_field(key_t) or 0) < 60 then return end
+  device:set_field(key_v, value)
+  device:set_field(key_t, now)
+  device:emit_event(event)
+end
+
 local function emit_temperature(device, celsius)
-  local c = celsius + pref(device, "tempCorrection", 0)
-  device:emit_event(capabilities.temperatureMeasurement.temperature({ value = round(c, 1), unit = "C" }))
+  local c = round(celsius + pref(device, "tempCorrection", 0), 1)
+  emit_measure(device, "temperature", c,
+    capabilities.temperatureMeasurement.temperature({ value = c, unit = "C" }, { state_change = true }))
 end
 
 local function emit_humidity(device, pct)
-  local h = clamp(pct + pref(device, "humCorrection", 0), 0, 100)
-  device:emit_event(capabilities.relativeHumidityMeasurement.humidity({ value = round(h, 0) }))
+  local h = round(clamp(pct + pref(device, "humCorrection", 0), 0, 100), 0)
+  emit_measure(device, "humidity", h,
+    capabilities.relativeHumidityMeasurement.humidity({ value = h }, { state_change = true }))
 end
 
--- Clusters standard 0x0402 / 0x0405 (utilises seulement si le canal Tuya n'envoie rien)
+-- Clusters standard 0x0402 / 0x0405 : toujours pris en compte, comme le driver officiel
+-- SmartThings (zigbee-humidity-sensor). Le canal Tuya ne fait que s'y ajouter.
 local function temp_handler(driver, device, value, zb_rx)
   maybe_reconfigure(driver, device)
-  if device:get_field(USES_TUYA_TEMP) then return end
   local raw = value.value
   if raw == -32768 then return end -- 0x8000 = valeur invalide
   emit_temperature(device, raw / (tonumber(pref(device, "tempDivisor", "100")) or 100))
@@ -346,7 +433,6 @@ end
 
 local function humidity_handler(driver, device, value, zb_rx)
   maybe_reconfigure(driver, device)
-  if device:get_field(USES_TUYA_HUM) then return end
   local raw = value.value
   if raw == 0xFFFF then return end -- valeur invalide
   emit_humidity(device, raw / (tonumber(pref(device, "humDivisor", "100")) or 100))
@@ -371,17 +457,18 @@ local function configure_temp(driver, device)
   device:send(TemperatureMeasurement.attributes.MeasuredValue:configure_reporting(device, 30, max_interval, 10))  -- 0,1 C
   device:send(RelativeHumidity.attributes.MeasuredValue:configure_reporting(device, 30, max_interval, 100))      -- 1 %
   device:send(PowerConfiguration.attributes.BatteryPercentageRemaining:configure_reporting(device, 3600, 21600, 1))
-  device:set_field(CONFIGURED_INTERVAL, max_interval, { persist = true })
   log.info(string.format("%s : envoi au moins toutes les %d min", tostring(device.label), max_interval // 60))
   sensor_refresh(device)
 end
 
 -- Le capteur dort : on profite de chaque message recu (il est reveille a ce moment-la)
--- pour lui envoyer la configuration si elle n'est pas encore a jour.
+-- pour lui envoyer la configuration si elle n'est pas encore a jour. La config n'est
+-- notee comme appliquee qu'ici, quand on sait que le capteur ecoute.
 maybe_reconfigure = function(driver, device)
   if is_temp(device) and device:get_field(CONFIGURED_INTERVAL) ~= report_interval_s(device) then
     log.info(tostring(device.label) .. " est reveille : envoi de la configuration")
     configure_temp(driver, device)
+    device:set_field(CONFIGURED_INTERVAL, report_interval_s(device), { persist = true })
   end
 end
 
@@ -392,7 +479,7 @@ end
 local function handle_tuya_dp(device, dp, dp_type, value)
   if is_lux(device) then
     if dp == 2 then
-      device:set_field(USES_TUYA_LUX, true, { persist = true })
+      device:set_field(USES_TUYA_LUX, os.time())
       emit_lux(device, value)
     elseif dp == 4 then
       emit_battery(device, value)
@@ -401,10 +488,10 @@ local function handle_tuya_dp(device, dp, dp_type, value)
     end
   elseif is_temp(device) then
     if dp == 1 then
-      device:set_field(USES_TUYA_TEMP, true, { persist = true })
+      device:set_field(USES_TUYA_TEMP, os.time())
       emit_temperature(device, value / 10)
     elseif dp == 2 then
-      device:set_field(USES_TUYA_HUM, true, { persist = true })
+      device:set_field(USES_TUYA_HUM, os.time())
       emit_humidity(device, value)
     elseif dp == 4 then
       emit_battery(device, value)
@@ -480,6 +567,7 @@ end
 local function do_configure(driver, device)
   log.info("Configuration de " .. tostring(device.label) .. " (" .. tostring(device:get_model()) .. ")")
   tuya_magic(device)
+  ota_image_notify(device)
   if is_metered_plug(device) then
     configure_plug(driver, device)
   elseif is_plug(device) then
@@ -520,7 +608,6 @@ local function info_changed(driver, device, event, args)
   if is_temp(device) and old.reportInterval ~= device.preferences.reportInterval then
     -- Le capteur dort : la config partira a son prochain reveil (maybe_reconfigure)
     device:set_field(CONFIGURED_INTERVAL, nil, { persist = true })
-    configure_temp(driver, device)
   end
 end
 
@@ -532,6 +619,8 @@ end
 -- Driver
 ---------------------------------------------------------------------------
 local driver_template = {
+  -- Ancienne surveillance des attributs, depreciee par le SDK (avertissement toutes les 30 s)
+  health_check = false,
   supported_capabilities = {
     capabilities.switch,
     capabilities.powerMeter,
@@ -613,6 +702,37 @@ local driver_template = {
     driverSwitched = driver_switched,
   },
 }
+
+-- Qualite du signal Zigbee (LQI, RSSI) publiee a partir de n'importe quel message
+-- recu, au plus toutes les 5 min par appareil (comme le sous-driver ZLinky).
+local SIGNAL_INTERVAL_S = 300
+local last_signal = {}
+local function emit_signal(device, zb_rx)
+  if zb_rx == nil or zb_rx.lqi == nil or zb_rx.rssi == nil then return end
+  if not device:supports_capability_by_id(capabilities.signalStrength.ID) then return end
+  local now = os.time()
+  if last_signal[device.id] and now - last_signal[device.id] < SIGNAL_INTERVAL_S then return end
+  last_signal[device.id] = now
+  device:emit_event(capabilities.signalStrength.lqi(zb_rx.lqi.value))
+  device:emit_event(capabilities.signalStrength.rssi({ value = zb_rx.rssi.value, unit = "dBm" }))
+end
+
+for _, cluster_handlers in pairs(driver_template.zigbee_handlers.attr) do
+  for attribute, handler in pairs(cluster_handlers) do
+    cluster_handlers[attribute] = function(driver, device, value, zb_rx)
+      emit_signal(device, zb_rx)
+      handler(driver, device, value, zb_rx)
+    end
+  end
+end
+for _, cluster_handlers in pairs(driver_template.zigbee_handlers.cluster) do
+  for command, handler in pairs(cluster_handlers) do
+    cluster_handlers[command] = function(driver, device, zb_rx)
+      emit_signal(device, zb_rx)
+      handler(driver, device, zb_rx)
+    end
+  end
+end
 
 -- Variation et couleur du ruban LED : gestionnaires par defaut du SDK
 -- (uniquement pour ces 2 capacites, nos propres gestionnaires restent prioritaires).

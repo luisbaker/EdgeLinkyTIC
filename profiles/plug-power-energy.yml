@@ -16,11 +16,15 @@ components:
         version: 1
       - id: refresh
         version: 1
+      - id: firmwareUpdate
+        version: 1
+      - id: signalStrength
+        version: 1
     categories:
-      - name: SmartPlug
+      - name: PowerMeasurementSensor
 metadata:
   mnmn: SmartThingsCommunity
-  vid: e40b66de-02d3-3f06-ba37-ed9a78c07e68
+  vid: 14580b5c-43f3-3d6c-8ac1-61e89bd8591b
 preferences:
   - name: "pollInterval"
     title: "Lecture de la conso (secondes)"

@@ -1,0 +1,16 @@
+{
+  "dashboard": { "states": [ { "label": "{{aujourdhui.value}} kWh" } ], "actions": [] },
+  "detailView": [
+    { "label": "Aujourd'hui", "displayType": "state", "state": { "label": "{{aujourdhui.value}} kWh" } },
+    { "label": "Cette semaine", "displayType": "state", "state": { "label": "{{semaine.value}} kWh" } },
+    { "label": "Ce mois-ci", "displayType": "state", "state": { "label": "{{mois.value}} kWh" } }
+  ],
+  "automation": {
+    "conditions": [
+      { "label": "Consommation aujourd'hui", "displayType": "numberField", "numberField": { "value": "aujourdhui.value", "valueType": "number", "unit": "kWh" } }
+    ],
+    "actions": []
+  },
+  "id": "smoothcommon59531.periodEnergy",
+  "version": 1
+}

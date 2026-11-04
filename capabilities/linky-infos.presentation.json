@@ -1,0 +1,22 @@
+{
+  "dashboard": { "states": [ { "label": "{{periodeTarifaire.value}}" } ], "actions": [] },
+  "detailView": [
+    { "label": "Période tarifaire", "displayType": "state", "state": { "label": "{{periodeTarifaire.value}}" } },
+    { "label": "Index en cours", "displayType": "state", "state": { "label": "{{indexEnCours.value}}" } },
+    { "label": "Tempo aujourd'hui", "displayType": "state", "state": { "label": "{{couleurAujourdhui.value}}" } },
+    { "label": "Tempo demain", "displayType": "state", "state": { "label": "{{couleurDemain.value}}" } },
+    { "label": "Puissance max du jour", "displayType": "state", "state": { "label": "{{puissanceMax.value}} VA" } },
+    { "label": "Intensité max", "displayType": "state", "state": { "label": "{{intensiteMax.value}} A" } },
+    { "label": "Message", "displayType": "state", "state": { "label": "{{message.value}}" } }
+  ],
+  "automation": {
+    "conditions": [
+      { "label": "Période tarifaire", "displayType": "textField", "textField": { "value": "periodeTarifaire.value", "valueType": "string" } },
+      { "label": "Tempo demain", "displayType": "textField", "textField": { "value": "couleurDemain.value", "valueType": "string" } },
+      { "label": "Puissance max du jour", "displayType": "numberField", "numberField": { "value": "puissanceMax.value", "valueType": "number", "unit": "VA" } }
+    ],
+    "actions": []
+  },
+  "id": "smoothcommon59531.linkyInfos",
+  "version": 1
+}

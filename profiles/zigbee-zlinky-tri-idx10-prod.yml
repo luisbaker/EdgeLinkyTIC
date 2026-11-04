@@ -15,6 +15,10 @@ components:
     version: 1
   - id: "stormachieve25639.subscription"
     version: 1
+  - id: "smoothcommon59531.linkyInfos"
+    version: 1
+  - id: "smoothcommon59531.periodEnergy"
+    version: 1
   categories:
   - name: CurbPowerMeter
 - id: phase1
@@ -49,50 +53,70 @@ components:
   capabilities:
   - id: energyMeter
     version: 1
+  - id: "smoothcommon59531.periodEnergy"
+    version: 1
 - id: index2
   label: "Index 2"
   capabilities:
   - id: energyMeter
+    version: 1
+  - id: "smoothcommon59531.periodEnergy"
     version: 1
 - id: index3
   label: "Index 3"
   capabilities:
   - id: energyMeter
     version: 1
+  - id: "smoothcommon59531.periodEnergy"
+    version: 1
 - id: index4
   label: "Index 4"
   capabilities:
   - id: energyMeter
+    version: 1
+  - id: "smoothcommon59531.periodEnergy"
     version: 1
 - id: index5
   label: "Index 5"
   capabilities:
   - id: energyMeter
     version: 1
+  - id: "smoothcommon59531.periodEnergy"
+    version: 1
 - id: index6
   label: "Index 6"
   capabilities:
   - id: energyMeter
+    version: 1
+  - id: "smoothcommon59531.periodEnergy"
     version: 1
 - id: index7
   label: "Index 7"
   capabilities:
   - id: energyMeter
     version: 1
+  - id: "smoothcommon59531.periodEnergy"
+    version: 1
 - id: index8
   label: "Index 8"
   capabilities:
   - id: energyMeter
+    version: 1
+  - id: "smoothcommon59531.periodEnergy"
     version: 1
 - id: index9
   label: "Index 9"
   capabilities:
   - id: energyMeter
     version: 1
+  - id: "smoothcommon59531.periodEnergy"
+    version: 1
 - id: index10
   label: "Index 10"
   capabilities:
   - id: energyMeter
+    version: 1
+  - id: "smoothcommon59531.periodEnergy"
     version: 1
 - id: production
   label: "Production"
@@ -112,3 +136,13 @@ components:
     version: 1
   - id: signalStrength
     version: 1
+preferences:
+- name: "utcOffset"
+  title: "Decalage horaire (heures)"
+  description: "Pour couper les journees a minuit : 1 en hiver, 2 en ete (France)"
+  required: false
+  preferenceType: integer
+  definition:
+    minimum: -12
+    maximum: 14
+    default: 1

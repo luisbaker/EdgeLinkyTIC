@@ -2,11 +2,22 @@
 
 ## Non publié
 
+### Signal Zigbee sur tous les appareils
+- Qualité du signal (LQI, RSSI, capacité `signalStrength`) sur tous les appareils Tuya, publiée à partir de n'importe quel message reçu, au plus toutes les 5 minutes (comme le ZLinky).
+- Prise TS011F : les sections Aujourd'hui / Cette semaine / Ce mois-ci ont été retirées de la page.
+
+### ZLinky : infos tarifaires (comme Zigbee2MQTT)
+- Nouvelle capacité `smoothcommon59531.linkyInfos` (fichiers dans `capabilities/linky-infos*.json`) sur le composant `main` : période tarifaire en cours (PTEC / LTARF), index en cours (NTARF), couleur Tempo aujourd'hui et demain (DEMAIN / registre STGE), puissance max du jour (SMAXSN), intensité max (IMAX), message du fournisseur (MSG1).
+- Ces attributs ne sont pas envoyés spontanément par le module : ils sont relus toutes les 5 minutes.
+- Non testé sur un vrai module : correspondances reprises de Zigbee2MQTT (`src/devices/lixee.ts`).
+
 ### Fusion avec les appareils Tuya
 - Le driver devient **Zigbee Luis (Tuya et ZLinky)** (`packageKey: zigbee-tuya-luis`). Le code ZLinky est désormais un sous-driver (`src/zlinky/init.lua`), activé seulement pour LiXee ZLinky_TIC. Les utilisateurs de l'ancien driver « Zigbee ZLinky » doivent basculer leur module sur ce driver.
 - Prise Tuya TS011F `_TZ3210_rwmitwj4` (Nous A7Z) : énergie (kWh), tension, courant, rapports SmartThings Energy, tuile qui affiche les watts.
 - Prise BSEED TS011F `_TZ3000_o1jzcxou` (sans mesure) et réglages Tuya pour toutes les TS011F : état après coupure, voyant, verrouillage enfant.
 - Ruban LED RGB Tuya TS0503B `_TZ3210_wp1k8xws` : marche/arrêt, variation, couleur (non testé : appareil hors ligne).
+- Version du firmware affichée pour tous les appareils Tuya, vérification de mise à jour (ImageNotify) à la configuration.
+- Icônes : catégories alignées sur les drivers officiels.
 - Capteur de luminosité Tuya TS0222 `_TZ3000_hy6ncvmw` : lecture du canal Tuya (lux et batterie), anti-spam réglable.
 - Capteur température/humidité HOBEIAN ZG-227Z : lecture du canal Tuya (DP 1/2/4), corrections, intervalle d'envoi réglable.
 - Échelles et datapoints repris de Zigbee2MQTT (`zigbee-herdsman-converters`).

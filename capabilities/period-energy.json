@@ -1,0 +1,9 @@
+{
+  "name": "Period Energy",
+  "attributes": {
+    "aujourdhui": { "schema": {"type":"object","properties":{"value":{"type":"number","minimum":0},"unit":{"type":"string","enum":["kWh"],"default":"kWh"}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] },
+    "semaine": { "schema": {"type":"object","properties":{"value":{"type":"number","minimum":0},"unit":{"type":"string","enum":["kWh"],"default":"kWh"}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] },
+    "mois": { "schema": {"type":"object","properties":{"value":{"type":"number","minimum":0},"unit":{"type":"string","enum":["kWh"],"default":"kWh"}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] }
+  },
+  "commands": {}
+}
