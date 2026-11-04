@@ -198,17 +198,21 @@ local function emit_consumption_report(device)
   device:set_field(LAST_REPORT_TIME, now, { persist = true })
 end
 
+-- Garde le rythme de 15 min meme apres un redemarrage du driver ou du hub :
+-- le prochain rapport part a "dernier rapport + 15 min" (au plus tot 1 min apres
+-- le demarrage, pour avoir des mesures fraiches), puis toutes les 15 min.
 local function start_energy_reports(device)
   local old = device:get_field(ENERGY_TIMER)
   if old ~= nil then device.thread:cancel_timer(old) end
-  local timer = device.thread:call_on_schedule(ENERGY_REPORT_INTERVAL, function() emit_consumption_report(device) end, "energy_report")
-  device:set_field(ENERGY_TIMER, timer)
-  -- Premier rapport 1 min apres le demarrage si le dernier date de plus de 15 min
-  -- (sinon chaque redemarrage du driver repoussait le rapport de 15 min).
   local last_t = device:get_field(LAST_REPORT_TIME) or 0
-  if os.time() - last_t >= ENERGY_REPORT_INTERVAL then
-    device.thread:call_with_delay(60, function() emit_consumption_report(device) end, "energy_first_report")
-  end
+  local wait = math.max(60, ENERGY_REPORT_INTERVAL - (os.time() - last_t))
+  local first = device.thread:call_with_delay(wait, function()
+    emit_consumption_report(device)
+    local timer = device.thread:call_on_schedule(ENERGY_REPORT_INTERVAL, function() emit_consumption_report(device) end, "energy_report")
+    device:set_field(ENERGY_TIMER, timer)
+  end, "energy_first_report")
+  device:set_field(ENERGY_TIMER, first)
+  log.info(string.format("%s : prochain rapport Energy dans %d s", tostring(device.label), wait))
 end
 
 local function scale(device, mult_field, div_field, raw)
