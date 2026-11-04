@@ -131,6 +131,16 @@ Pour des graphiques de consommation du Linky, l'espace client **Enedis** (courbe
 
 ## Installation
 
+### Le plus simple : le lien d'invitation
+
+1. Ouvre **[Installer Zigbee Luis](https://bestow-regional.api.smartthings.com/invite/qWjBqvNRv9ly)** et connecte-toi avec ton compte Samsung.
+2. Inscris ton hub sur le canal « Baker Telekom Zigbee et Tuya Drivers », puis installe **Zigbee Luis (Tuya et ZLinky)**.
+3. Bascule chaque appareil dessus : appareil → ⋮ → Informations → Driver. Réveille les capteurs sur batterie (appui sur leur bouton) juste après.
+
+Les nouvelles versions publiées sur le canal arrivent automatiquement sur ton hub.
+
+### Depuis le code (développeurs)
+
 Avec la [SmartThings CLI](https://github.com/SmartThingsCommunity/smartthings-cli) (vérifie que le fichier téléchargé vient bien des *Releases* officielles) :
 
 ```
