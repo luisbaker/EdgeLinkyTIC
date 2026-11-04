@@ -41,7 +41,16 @@ local HAS_BATTERY_PCT = "has_battery_pct"
 local USES_TUYA_LUX = "uses_tuya_lux"
 local USES_TUYA_TEMP = "uses_tuya_temp"
 local USES_TUYA_HUM = "uses_tuya_hum"
-local CONFIGURED_INTERVAL = "configured_interval"
+local CONFIGURED_INTERVAL = "configured_interval_v2" -- v2 : force un vrai envoi (v1 etait note a tort)
+
+-- Ces capteurs envoient par le canal standard ET (plus rarement) par le canal Tuya.
+-- Apres une mesure Tuya, le canal standard est ignore pendant 10 min seulement
+-- (evite les doublons), puis de nouveau pris en compte.
+local TUYA_PRIORITY_S = 600
+local function tuya_recent(device, field)
+  local t = device:get_field(field)
+  return type(t) == "number" and (os.time() - t) < TUYA_PRIORITY_S
+end
 
 -- Defini plus bas : envoie la config au capteur quand il est reveille
 local maybe_reconfigure
@@ -367,7 +376,7 @@ end
 
 -- Cluster standard 0x0400 (utilise seulement si le canal Tuya n'envoie rien)
 local function lux_handler(driver, device, value, zb_rx)
-  if device:get_field(USES_TUYA_LUX) then return end
+  if tuya_recent(device, USES_TUYA_LUX) then return end
   local raw = value.value
   if raw == 0xFFFF then return end -- valeur invalide
   local lux
@@ -399,10 +408,10 @@ local function emit_humidity(device, pct)
   device:emit_event(capabilities.relativeHumidityMeasurement.humidity({ value = round(h, 0) }))
 end
 
--- Clusters standard 0x0402 / 0x0405 (utilises seulement si le canal Tuya n'envoie rien)
+-- Clusters standard 0x0402 / 0x0405 : toujours pris en compte, comme le driver officiel
+-- SmartThings (zigbee-humidity-sensor). Le canal Tuya ne fait que s'y ajouter.
 local function temp_handler(driver, device, value, zb_rx)
   maybe_reconfigure(driver, device)
-  if device:get_field(USES_TUYA_TEMP) then return end
   local raw = value.value
   if raw == -32768 then return end -- 0x8000 = valeur invalide
   emit_temperature(device, raw / (tonumber(pref(device, "tempDivisor", "100")) or 100))
@@ -410,7 +419,6 @@ end
 
 local function humidity_handler(driver, device, value, zb_rx)
   maybe_reconfigure(driver, device)
-  if device:get_field(USES_TUYA_HUM) then return end
   local raw = value.value
   if raw == 0xFFFF then return end -- valeur invalide
   emit_humidity(device, raw / (tonumber(pref(device, "humDivisor", "100")) or 100))
@@ -435,17 +443,18 @@ local function configure_temp(driver, device)
   device:send(TemperatureMeasurement.attributes.MeasuredValue:configure_reporting(device, 30, max_interval, 10))  -- 0,1 C
   device:send(RelativeHumidity.attributes.MeasuredValue:configure_reporting(device, 30, max_interval, 100))      -- 1 %
   device:send(PowerConfiguration.attributes.BatteryPercentageRemaining:configure_reporting(device, 3600, 21600, 1))
-  device:set_field(CONFIGURED_INTERVAL, max_interval, { persist = true })
   log.info(string.format("%s : envoi au moins toutes les %d min", tostring(device.label), max_interval // 60))
   sensor_refresh(device)
 end
 
 -- Le capteur dort : on profite de chaque message recu (il est reveille a ce moment-la)
--- pour lui envoyer la configuration si elle n'est pas encore a jour.
+-- pour lui envoyer la configuration si elle n'est pas encore a jour. La config n'est
+-- notee comme appliquee qu'ici, quand on sait que le capteur ecoute.
 maybe_reconfigure = function(driver, device)
   if is_temp(device) and device:get_field(CONFIGURED_INTERVAL) ~= report_interval_s(device) then
     log.info(tostring(device.label) .. " est reveille : envoi de la configuration")
     configure_temp(driver, device)
+    device:set_field(CONFIGURED_INTERVAL, report_interval_s(device), { persist = true })
   end
 end
 
@@ -456,7 +465,7 @@ end
 local function handle_tuya_dp(device, dp, dp_type, value)
   if is_lux(device) then
     if dp == 2 then
-      device:set_field(USES_TUYA_LUX, true, { persist = true })
+      device:set_field(USES_TUYA_LUX, os.time())
       emit_lux(device, value)
     elseif dp == 4 then
       emit_battery(device, value)
@@ -465,10 +474,10 @@ local function handle_tuya_dp(device, dp, dp_type, value)
     end
   elseif is_temp(device) then
     if dp == 1 then
-      device:set_field(USES_TUYA_TEMP, true, { persist = true })
+      device:set_field(USES_TUYA_TEMP, os.time())
       emit_temperature(device, value / 10)
     elseif dp == 2 then
-      device:set_field(USES_TUYA_HUM, true, { persist = true })
+      device:set_field(USES_TUYA_HUM, os.time())
       emit_humidity(device, value)
     elseif dp == 4 then
       emit_battery(device, value)
@@ -585,7 +594,6 @@ local function info_changed(driver, device, event, args)
   if is_temp(device) and old.reportInterval ~= device.preferences.reportInterval then
     -- Le capteur dort : la config partira a son prochain reveil (maybe_reconfigure)
     device:set_field(CONFIGURED_INTERVAL, nil, { persist = true })
-    configure_temp(driver, device)
   end
 end
 
