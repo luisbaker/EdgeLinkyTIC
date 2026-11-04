@@ -1,6 +1,28 @@
-# Driver SmartThings Edge pour le module ZLinky TIC
+# Zigbee Luis — driver SmartThings Edge (ZLinky TIC + Tuya)
 
-Driver SmartThings Edge pour le module Zigbee [ZLinky TIC de LiXee](https://lixee.fr/), qui lit la téléinformation (TIC) d'un compteur Linky.
+Un seul driver SmartThings Edge, open source (Apache-2.0), pour :
+
+| Appareil | Modèle / fabricant | Code |
+|---|---|---|
+| Module ZLinky TIC (compteur Linky) | LiXee `ZLinky_TIC` | `src/zlinky/` (sous-driver) |
+| Prise avec mesure de conso (Nous A7Z) | Tuya `TS011F` / `_TZ3210_rwmitwj4` | `src/init.lua` |
+| Capteur de luminosité | Tuya `TS0222` / `_TZ3000_hy6ncvmw` | `src/init.lua` |
+| Capteur température / humidité | HOBEIAN `ZG-227Z` | `src/init.lua` |
+
+## Appareils Tuya
+
+- **Prise TS011F** : marche/arrêt, puissance (W), énergie (kWh), tension (V), courant (A), rapports **SmartThings Energy** toutes les 15 min. La tuile affiche les watts (présentation `presentation/plug.json`). Lecture de la prise toutes les 120 s (réglable).
+- **TS0222** : lit le canal Tuya 0xEF00 (DP 2 = lux, DP 4 = batterie), avec repli sur le cluster standard 0x0400. Anti-spam réglable (intervalle minimum, changement minimum en %), multiplicateur de correction.
+- **ZG-227Z** : lit le canal Tuya 0xEF00 (DP 1 = température ÷10, DP 2 = humidité, DP 4 = batterie), avec repli sur les clusters standard. Corrections de température et d'humidité, intervalle d'envoi réglable (5 à 60 min, appliqué au réveil du capteur).
+- Échelles et datapoints repris de [Zigbee2MQTT](https://github.com/Koenkk/zigbee-herdsman-converters).
+
+Pour ajouter un appareil Tuya : ajoute son empreinte dans `fingerprints.yml` et, si besoin, ses datapoints dans `handle_tuya_dp` (`src/init.lua`).
+
+## Module ZLinky TIC
+
+Sous-driver pour le module Zigbee [ZLinky TIC de LiXee](https://lixee.fr/), qui lit la téléinformation (TIC) d'un compteur Linky.
+
+> Ancien driver « Zigbee ZLinky » (`packageKey: zigbee-zlinky`) : après installation de ce driver, bascule le module dessus (appareil → ⋮ → Informations → Driver).
 
 Fork maintenu de [sdalu/EdgeLinkyTIC](https://github.com/sdalu/EdgeLinkyTIC). Les contributions sont les bienvenues.
 
@@ -32,12 +54,24 @@ La puissance instantanée est une puissance **apparente** (VA). La seule puissan
 
 ## Installation
 
-Voir le [fil de la communauté SmartThings](https://community.smartthings.com/t/st-edge-zlinky-tic/254857).
+Avec la [SmartThings CLI](https://github.com/SmartThingsCommunity/smartthings-cli) :
+
+```
+smartthings edge:channels:create
+smartthings edge:channels:enroll
+smartthings edge:drivers:package . --channel <ID_CANAL> --hub <ID_HUB>
+```
+
+Puis bascule chaque appareil sur **Zigbee Luis (Tuya et ZLinky)** : appareil → ⋮ → Informations → Driver. Les capteurs sur batterie doivent être réveillés (appui sur leur bouton) juste après la bascule.
+
+Fil de la communauté SmartThings pour le ZLinky : [ST Edge ZLinky TIC](https://community.smartthings.com/t/st-edge-zlinky-tic/254857).
 
 ## Développement
 
+- Structure : `src/init.lua` (driver principal + appareils Tuya), `src/zlinky/init.lua` (sous-driver ZLinky), `src/zlinky_logic.lua` (logique pure du ZLinky, testée).
 - Spécification du module : [Zlinky_TIC](https://github.com/fairecasoimeme/Zlinky_TIC/blob/master/README.md)
-- Les profils de `profiles/` sont générés : modifier `tools/generer-profils.sh` puis le relancer.
+- Les profils `zigbee-zlinky*` de `profiles/` sont générés : modifier `tools/generer-profils.sh` puis le relancer. Les profils Tuya (`plug-power-energy`, `illuminance-battery-tuya`, `temp-humidity-battery-tuya`) sont écrits à la main.
+- La tuile de la prise utilise la présentation `presentation/plug.json`. Si tu publies le driver depuis un autre compte, recrée-la avec `smartthings presentation:device-config:create -i presentation/plug.json` et remplace le `vid` dans `profiles/plug-power-energy.yml`.
 - Tests de la logique pure (sans hub) : `lua tests/test_logique.lua`
 - Installation sur un hub : `smartthings edge:drivers:package .` puis `smartthings edge:drivers:install`.
 

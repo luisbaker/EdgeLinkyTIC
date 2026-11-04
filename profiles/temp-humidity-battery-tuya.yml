@@ -1,0 +1,66 @@
+name: temp-humidity-battery-tuya
+components:
+  - id: main
+    capabilities:
+      - id: temperatureMeasurement
+        version: 1
+      - id: relativeHumidityMeasurement
+        version: 1
+      - id: battery
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: MultiFunctionalSensor
+preferences:
+  - name: "reportInterval"
+    title: "Intervalle d'envoi (minutes)"
+    description: "Le capteur envoie au moins une mesure a cet intervalle. Applique a son prochain reveil."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "5": "5 min"
+        "10": "10 min"
+        "15": "15 min"
+        "30": "30 min"
+        "60": "60 min"
+      default: "15"
+  - name: "tempCorrection"
+    title: "Correction temperature (C)"
+    description: "Ajoute cette valeur a la temperature lue (ex. -1.5)"
+    required: false
+    preferenceType: number
+    definition:
+      minimum: -10
+      maximum: 10
+      default: 0
+  - name: "tempDivisor"
+    title: "Echelle temperature"
+    description: "Changez si la temperature est 10 fois trop grande ou trop petite"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "100": "Standard (/100)"
+        "10": "Tuya (/10)"
+      default: "100"
+  - name: "humCorrection"
+    title: "Correction humidite (%)"
+    description: "Ajoute cette valeur a l'humidite lue (ex. 5)"
+    required: false
+    preferenceType: integer
+    definition:
+      minimum: -20
+      maximum: 20
+      default: 0
+  - name: "humDivisor"
+    title: "Echelle humidite"
+    description: "Changez si l'humidite est 10 fois trop grande ou trop petite"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "100": "Standard (/100)"
+        "10": "Tuya (/10)"
+      default: "100"

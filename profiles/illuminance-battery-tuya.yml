@@ -1,0 +1,46 @@
+name: illuminance-battery-tuya
+components:
+  - id: main
+    capabilities:
+      - id: illuminanceMeasurement
+        version: 1
+      - id: battery
+        version: 1
+preferences:
+  - name: "luxMode"
+    title: "Mode de conversion lux"
+    description: "Standard Zigbee (logarithmique) ou valeur brute. Changez si les lux semblent faux."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "log": "Standard Zigbee"
+        "raw": "Valeur brute"
+      default: "log"
+  - name: "luxMultiplier"
+    title: "Correction lux (multiplicateur)"
+    description: "Ex. 1.5 si le capteur affiche 100 lux pour 150 lux reels"
+    required: false
+    preferenceType: number
+    definition:
+      minimum: 0.1
+      maximum: 10
+      default: 1
+  - name: "luxMinInterval"
+    title: "Intervalle minimum (secondes)"
+    description: "Ignore les petits changements pendant ce delai (economise la batterie)"
+    required: false
+    preferenceType: integer
+    definition:
+      minimum: 5
+      maximum: 3600
+      default: 60
+  - name: "luxMinChange"
+    title: "Changement minimum (%)"
+    description: "Un changement plus grand est envoye tout de suite"
+    required: false
+    preferenceType: integer
+    definition:
+      minimum: 1
+      maximum: 100
+      default: 15
