@@ -99,6 +99,17 @@ local function tuya_magic(device)
   if not ok then log.warn("Lecture 0xFFFE impossible : " .. tostring(err)) end
 end
 
+-- Demande a l'appareil de verifier s'il existe une mise a jour firmware
+-- (comme les drivers officiels, ex. Inovelli). L'appareil interroge alors la
+-- Station, qui ne propose que les firmwares deposes chez Samsung.
+local TUYA_MFG_CODE = 0x1141
+local function ota_image_notify(device)
+  local ok, err = pcall(function()
+    device:send(clusters.OTAUpgrade.commands.ImageNotify(device, 0x00, 100, TUYA_MFG_CODE, 0xFFFF, 0xFFFFFFFF))
+  end)
+  if not ok then log.warn("ImageNotify impossible : " .. tostring(err)) end
+end
+
 local function emit_battery(device, pct)
   device:emit_event(capabilities.battery.battery(clamp(math.floor(pct + 0.5), 0, 100)))
 end
@@ -480,6 +491,7 @@ end
 local function do_configure(driver, device)
   log.info("Configuration de " .. tostring(device.label) .. " (" .. tostring(device:get_model()) .. ")")
   tuya_magic(device)
+  ota_image_notify(device)
   if is_metered_plug(device) then
     configure_plug(driver, device)
   elseif is_plug(device) then

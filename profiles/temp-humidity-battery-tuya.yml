@@ -10,8 +10,10 @@ components:
         version: 1
       - id: refresh
         version: 1
+      - id: firmwareUpdate
+        version: 1
     categories:
-      - name: MultiFunctionalSensor
+      - name: TempHumiditySensor
 preferences:
   - name: "reportInterval"
     title: "Intervalle d'envoi (minutes)"
