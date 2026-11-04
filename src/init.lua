@@ -40,6 +40,8 @@ local TUYA_TYPE_VALUE = 0x02 -- entier signe 32 bits
 local POLL_TIMER = "poll_timer"
 local LAST_LUX = "last_lux"
 local LAST_LUX_TIME = "last_lux_time"
+local LAST_LUX_FORCED = "last_lux_forced"
+local LUX_HEARTBEAT_S = 3600 -- au moins une valeur de luminosite par heure
 local HAS_BATTERY_PCT = "has_battery_pct"
 local USES_TUYA_LUX = "uses_tuya_lux"
 local CONFIGURED_INTERVAL = "configured_interval_v2" -- v2 : force un vrai envoi (v1 etait note a tort)
@@ -411,8 +413,21 @@ local function emit_lux(device, lux)
       return
     end
   end
+
+  -- Valeur identique (ex. 0 lux toute la nuit) : SmartThings ne l'enregistrerait pas
+  -- et le graphique afficherait « aucune donnee ». On la force (state_change) au
+  -- plus une fois par heure, pour avoir au moins un point par heure.
+  if last ~= nil and lux == last then
+    if now - (device:get_field(LAST_LUX_FORCED) or 0) < LUX_HEARTBEAT_S then return end
+    device:set_field(LAST_LUX_FORCED, now)
+    device:set_field(LAST_LUX_TIME, now)
+    device:emit_event(capabilities.illuminanceMeasurement.illuminance({ value = lux, unit = "lux" }, { state_change = true }))
+    return
+  end
+
   device:set_field(LAST_LUX, lux)
   device:set_field(LAST_LUX_TIME, now)
+  device:set_field(LAST_LUX_FORCED, now)
   device:emit_event(capabilities.illuminanceMeasurement.illuminance({ value = lux, unit = "lux" }))
 end
 
