@@ -50,6 +50,12 @@ Fork maintenu de [sdalu/EdgeLinkyTIC](https://github.com/sdalu/EdgeLinkyTIC). Le
 | Option tarifaire | OPTARIF | NGTF | `main` |
 | Production : énergie injectée et puissance | — | EAIT, SINSTI | `production` |
 | Puissance active moyenne (W, `powerMeter`) | — | CCASN | `main` |
+| Période tarifaire en cours (HP, HC, Tempo…) | PTEC | LTARF | `main` (Infos Linky) |
+| Numéro d'index en cours | — | NTARF | `main` (Infos Linky) |
+| Couleur Tempo aujourd'hui / demain | DEMAIN (demain) | STGE | `main` (Infos Linky) |
+| Puissance max du jour (VA) | — | SMAXSN | `main` (Infos Linky) |
+| Intensité max (A) | IMAX | — | `main` (Infos Linky) |
+| Message du fournisseur | — | MSG1 | `main` (Infos Linky) |
 | Qualité du signal Zigbee (LQI, RSSI) | ✓ | ✓ | `linky` |
 | Mode, numéro de série, tension du module | ✓ | ✓ | `linky` |
 

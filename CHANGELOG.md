@@ -2,6 +2,11 @@
 
 ## Non publié
 
+### ZLinky : infos tarifaires (comme Zigbee2MQTT)
+- Nouvelle capacité `smoothcommon59531.linkyInfos` (fichiers dans `capabilities/linky-infos*.json`) sur le composant `main` : période tarifaire en cours (PTEC / LTARF), index en cours (NTARF), couleur Tempo aujourd'hui et demain (DEMAIN / registre STGE), puissance max du jour (SMAXSN), intensité max (IMAX), message du fournisseur (MSG1).
+- Ces attributs ne sont pas envoyés spontanément par le module : ils sont relus toutes les 5 minutes.
+- Non testé sur un vrai module : correspondances reprises de Zigbee2MQTT (`src/devices/lixee.ts`).
+
 ### Fusion avec les appareils Tuya
 - Le driver devient **Zigbee Luis (Tuya et ZLinky)** (`packageKey: zigbee-tuya-luis`). Le code ZLinky est désormais un sous-driver (`src/zlinky/init.lua`), activé seulement pour LiXee ZLinky_TIC. Les utilisateurs de l'ancien driver « Zigbee ZLinky » doivent basculer leur module sur ce driver.
 - Prise Tuya TS011F `_TZ3210_rwmitwj4` (Nous A7Z) : énergie (kWh), tension, courant, rapports SmartThings Energy, tuile qui affiche les watts.

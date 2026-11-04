@@ -15,6 +15,8 @@ components:
     version: 1
   - id: "stormachieve25639.subscription"
     version: 1
+  - id: "smoothcommon59531.linkyInfos"
+    version: 1
   categories:
   - name: CurbPowerMeter
 - id: phase1

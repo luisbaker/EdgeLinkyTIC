@@ -46,6 +46,8 @@ for phases in mono tri; do
         echo "    version: 1"
         echo "  - id: \"stormachieve25639.subscription\""
         echo "    version: 1"
+        echo "  - id: \"smoothcommon59531.linkyInfos\""
+        echo "    version: 1"
         echo "  categories:"
         echo "  - name: CurbPowerMeter"
         if [ "$phases" = tri ]; then

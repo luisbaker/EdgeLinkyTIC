@@ -19,6 +19,7 @@ local c_linkyMode           = capabilities["stormachieve25639.linkyMode"]
 local c_linkySerial         = capabilities["stormachieve25639.linkySerial"]
 local c_subscription        = capabilities["stormachieve25639.subscription"]
 local c_instantaneous       = capabilities["stormachieve25639.instantaneous"]
+local c_linkyInfos          = capabilities["smoothcommon59531.linkyInfos"]
 
 local CLUSTER_METERING    = clusters.SimpleMetering.ID          -- 0x0702
 local CLUSTER_METER_ID    = 0x0B01                              -- Meter Identification
@@ -394,6 +395,88 @@ local function module_voltage_handler(driver, device, value, zb_rx)
 end
 
 ------------------------------------------------------------------------------
+-- Infos tarifaires (capacité smoothcommon59531.linkyInfos), comme Zigbee2MQTT :
+--   historique : PTEC (0x0702/0x0020), DEMAIN (0xFF66/0x0001), IMAX (0x0B04/0x050A)
+--   standard   : LTARF (0xFF66/0x0200), NTARF (0xFF66/0x0201), STGE (0xFF66/0x0217),
+--                MSG1 (0xFF66/0x0215), SMAXSN (0x0B04/0x050D)
+-- Ces attributs ne sont pas envoyés spontanément : ils sont relus toutes les 5 min.
+------------------------------------------------------------------------------
+
+local FAST_POLL_S = 300
+local TEMPO_STGE = { [0] = "Inconnue", [1] = "Bleu", [2] = "Blanc", [3] = "Rouge" }
+local TEMPO_DEMAIN = { BLEU = "Bleu", BLAN = "Blanc", ROUG = "Rouge" }
+
+local function emit_info(device, attribute, payload)
+  emit_to(device, "main", c_linkyInfos[attribute](payload))
+end
+
+local function period_handler(driver, device, value, zb_rx)
+  local s = logic.clean_string(value.value)
+  if s then emit_info(device, "periodeTarifaire", { value = s }) end
+end
+
+local function current_index_handler(driver, device, value, zb_rx)
+  local n = tonumber(value.value)
+  if n and n >= 1 and n <= 10 then emit_info(device, "indexEnCours", { value = n }) end
+end
+
+local function tomorrow_color_handler(driver, device, value, zb_rx)
+  local s = logic.clean_string(value.value)
+  if s then emit_info(device, "couleurDemain", { value = TEMPO_DEMAIN[s:sub(1, 4)] or "Inconnue" }) end
+end
+
+local function message_handler(driver, device, value, zb_rx)
+  local s = logic.clean_string(value.value)
+  if s then emit_info(device, "message", { value = s:sub(1, 64) }) end
+end
+
+-- STGE : 8 caractères hexadécimaux (ou octets bruts selon le firmware).
+local function decode_stge(raw)
+  if type(raw) ~= "string" or #raw == 0 then return nil end
+  local hex = raw:match("^%s*(%x+)%s*$")
+  if hex then return tonumber(hex, 16) end
+  local n = 0
+  for i = 1, #raw do n = n * 256 + raw:byte(i) end
+  return n
+end
+
+local function status_register_handler(driver, device, value, zb_rx)
+  local n = decode_stge(value.value)
+  if n == nil then return end
+  emit_info(device, "couleurAujourdhui", { value = TEMPO_STGE[(n >> 24) & 0x3] })
+  emit_info(device, "couleurDemain", { value = TEMPO_STGE[(n >> 26) & 0x3] })
+end
+
+local function power_max_handler(driver, device, value, zb_rx)
+  if not logic.is_valid_measure(value.value) or value.value < 0 then return end
+  emit_info(device, "puissanceMax", { value = value.value, unit = "VA" })
+end
+
+local function current_max_handler(driver, device, value, zb_rx)
+  if not logic.is_valid_measure(value.value) then return end
+  emit_info(device, "intensiteMax", { value = value.value, unit = "A" })
+end
+
+local function fast_poll(device)
+  local info = mode_info(device)
+  if info and info.standard then
+    read_spaced(device, {
+      { CLUSTER_LIXEE, 0x0200 },      -- LTARF
+      { CLUSTER_LIXEE, 0x0201 },      -- NTARF
+      { CLUSTER_LIXEE, 0x0217 },      -- STGE
+      { CLUSTER_LIXEE, 0x0215 },      -- MSG1
+      { CLUSTER_ELECTRICAL, 0x050D }, -- SMAXSN
+    })
+  else
+    read_spaced(device, {
+      { CLUSTER_METERING, 0x0020 },   -- PTEC
+      { CLUSTER_LIXEE, 0x0001 },      -- DEMAIN
+      { CLUSTER_ELECTRICAL, 0x050A }, -- IMAX
+    })
+  end
+end
+
+------------------------------------------------------------------------------
 -- Cycle de vie
 ------------------------------------------------------------------------------
 
@@ -401,26 +484,33 @@ local function poll(device)
   read_spaced(device, READ_ONLY_ATTRIBUTES)
 end
 
+-- Lecture complète, puis infos tarifaires une fois les lectures espacées terminées.
+local function read_everything(device)
+  read_all(device)
+  device.thread:call_with_delay(40, function() fast_poll(device) end)
+end
+
 local function device_init(driver, device)
   log.info("[" .. device.id .. "] Initialisation du ZLinky")
   register_reporting(device)
   device.thread:call_on_schedule(POLL_INTERVAL_S, function() poll(device) end, "zlinky_poll")
+  device.thread:call_on_schedule(FAST_POLL_S, function() fast_poll(device) end, "zlinky_fast_poll")
   device:online()
 end
 
 local function device_added(driver, device)
-  read_all(device)
+  read_everything(device)
 end
 
 local function do_configure(driver, device)
   local profile = register_reporting(device)
   device:configure()
   device:set_field(F_CONFIGURED, profile, PERSIST)
-  read_all(device)
+  read_everything(device)
 end
 
 local function refresh_handler(driver, device, command)
-  read_all(device)
+  read_everything(device)
 end
 
 ------------------------------------------------------------------------------
@@ -431,6 +521,7 @@ local metering_handlers = {
   [0x0000] = total_handler,            -- BASE / EAST
   [0x0001] = injected_energy_handler,  -- EAIT (production)
   [0x0308] = serial_handler,           -- ADCO / ADSC
+  [0x0020] = period_handler,           -- PTEC (historique)
 }
 for i = 1, TIER_COUNT do
   metering_handlers[tier_attribute(i)] = tier_handler(i)
@@ -469,11 +560,18 @@ local zigbee_zlinky_template = {
         [0x050F] = apparent_power_050F,      -- PAPP / SINSTS / SINSTS1
         [0x090F] = apparent_power_phase(2),  -- SINSTS2
         [0x0A0F] = apparent_power_phase(3),  -- SINSTS3
+        [0x050A] = current_max_handler,      -- IMAX (historique)
+        [0x050D] = power_max_handler,        -- SMAXSN (standard)
       },
       [CLUSTER_LIXEE] = {
         [0x0000] = tariff_handler,           -- OPTARIF / NGTF
         [0x0207] = injected_power_handler,   -- SINSTI (production)
         [0x0300] = mode_handler,             -- mode Linky
+        [0x0001] = tomorrow_color_handler,   -- DEMAIN (historique, Tempo)
+        [0x0200] = period_handler,           -- LTARF (standard)
+        [0x0201] = current_index_handler,    -- NTARF (standard)
+        [0x0215] = message_handler,          -- MSG1 (standard)
+        [0x0217] = status_register_handler,  -- STGE (standard, couleurs Tempo)
       },
       [CLUSTER_METER_ID] = {
         [0x000D] = subscribed_power_handler, -- ISOUSC / PREF
