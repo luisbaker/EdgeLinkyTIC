@@ -45,6 +45,9 @@ local CONFIGURED_INTERVAL = "configured_interval"
 
 -- Defini plus bas : envoie la config au capteur quand il est reveille
 local maybe_reconfigure
+-- Defini plus bas : passe une prise "sans mesure" sur le profil avec consommation
+local enable_metering
+local METERING_DETECTED = "metering_detected"
 
 -- Echelles de la prise (Z2M TS011F_plug_1). Tension et puissance : lues sur la prise.
 local CURRENT_DIVISOR = 1000 -- mA -> A
@@ -57,12 +60,16 @@ local POWER_MULT, POWER_DIV = "power_mult", "power_div"
 ---------------------------------------------------------------------------
 local function is_plug(device) return device:get_model() == "TS011F" end
 
--- Prises TS011F sans mesure de consommation (Z2M : TS011F_plug_2)
+-- Prises TS011F sans mesure de consommation (Z2M : TS011F_plug_2).
+-- Certaines versions materielles mesurent quand meme : le driver le detecte
+-- (voir enable_metering) et bascule alors sur le profil avec consommation.
 local NON_METERED_PLUGS = {
   ["_TZ3000_o1jzcxou"] = true, -- BSEED prise murale
 }
 local function is_metered_plug(device)
-  return is_plug(device) and not NON_METERED_PLUGS[device:get_manufacturer()]
+  if not is_plug(device) then return false end
+  if device:get_field(METERING_DETECTED) then return true end
+  return not NON_METERED_PLUGS[device:get_manufacturer()]
 end
 local function is_lux(device) return device:get_model() == "TS0222" end
 local function is_light(device) return device:get_model() == "TS0503B" end
@@ -119,7 +126,12 @@ end
 ---------------------------------------------------------------------------
 local function plug_refresh(device)
   device:send(OnOff.attributes.OnOff:read(device))
-  if not is_metered_plug(device) then return end
+  if not is_metered_plug(device) then
+    -- Sonde : si la prise repond avec une vraie mesure, on active la consommation
+    device:send(ElectricalMeasurement.attributes.ActivePower:read(device))
+    device:send(SimpleMetering.attributes.CurrentSummationDelivered:read(device))
+    return
+  end
   device:send(ElectricalMeasurement.attributes.ActivePower:read(device))
   device:send(ElectricalMeasurement.attributes.RMSVoltage:read(device))
   device:send(ElectricalMeasurement.attributes.RMSCurrent:read(device))
@@ -149,18 +161,28 @@ local LAST_REPORT_WH = "last_report_wh"
 local LAST_REPORT_TIME = "last_report_time"
 local ENERGY_REPORT_INTERVAL = 15 * 60
 
+local function iso_time(t)
+  return os.date("!%Y-%m-%dT%H:%M:%SZ", t)
+end
+
+-- Meme format que les appareils Samsung (ex. lave-linge) : periode start/end,
+-- energie totale et consommee sur la periode (Wh), puissance actuelle (W).
 local function emit_consumption_report(device)
   local kwh = device:get_latest_state("main", capabilities.energyMeter.ID, capabilities.energyMeter.energy.NAME)
   if kwh == nil then return end
   local wh = kwh * 1000
   local now = os.time()
   local last_wh = device:get_field(LAST_REPORT_WH)
+  local last_t = device:get_field(LAST_REPORT_TIME) or (now - ENERGY_REPORT_INTERVAL)
   local delta = 0
   if last_wh ~= nil and wh >= last_wh then delta = wh - last_wh end
-  -- Meme format que les drivers officiels SmartThings (valeurs en Wh)
+  local power = device:get_latest_state("main", capabilities.powerMeter.ID, capabilities.powerMeter.power.NAME) or 0
   device:emit_event(capabilities.powerConsumptionReport.powerConsumption({
+    start = iso_time(last_t),
+    ["end"] = iso_time(now - 1),
     energy = round(wh, 1),
     deltaEnergy = round(delta, 1),
+    power = power,
   }))
   device:set_field(LAST_REPORT_WH, wh, { persist = true })
   device:set_field(LAST_REPORT_TIME, now, { persist = true })
@@ -171,6 +193,12 @@ local function start_energy_reports(device)
   if old ~= nil then device.thread:cancel_timer(old) end
   local timer = device.thread:call_on_schedule(ENERGY_REPORT_INTERVAL, function() emit_consumption_report(device) end, "energy_report")
   device:set_field(ENERGY_TIMER, timer)
+  -- Premier rapport 1 min apres le demarrage si le dernier date de plus de 15 min
+  -- (sinon chaque redemarrage du driver repoussait le rapport de 15 min).
+  local last_t = device:get_field(LAST_REPORT_TIME) or 0
+  if os.time() - last_t >= ENERGY_REPORT_INTERVAL then
+    device.thread:call_with_delay(60, function() emit_consumption_report(device) end, "energy_first_report")
+  end
 end
 
 local function scale(device, mult_field, div_field, raw)
@@ -195,22 +223,37 @@ local function onoff_handler(driver, device, value, zb_rx)
   end
 end
 
+-- Prise declaree "sans mesure" qui renvoie une vraie valeur (> 0) : elle mesure.
+local function probe_metering(driver, device, raw)
+  if is_metered_plug(device) then return false end
+  if type(raw) == "number" and raw > 0 then
+    enable_metering(driver, device)
+  else
+    log.debug(tostring(device.label) .. " : pas de mesure de consommation (valeur " .. tostring(raw) .. ")")
+  end
+  return true
+end
+
 local function active_power_handler(driver, device, value, zb_rx)
+  if probe_metering(driver, device, value.value) then return end
   local w = scale(device, POWER_MULT, POWER_DIV, value.value)
   if w < 0 then w = 0 end
   device:emit_event(capabilities.powerMeter.power({ value = round(w, 1), unit = "W" }))
 end
 
 local function voltage_handler(driver, device, value, zb_rx)
+  if not is_metered_plug(device) then return end
   local v = scale(device, VOLT_MULT, VOLT_DIV, value.value)
   device:emit_event(capabilities.voltageMeasurement.voltage({ value = round(v, 1), unit = "V" }))
 end
 
 local function current_handler(driver, device, value, zb_rx)
+  if not is_metered_plug(device) then return end
   device:emit_event(capabilities.currentMeasurement.current({ value = round(value.value / CURRENT_DIVISOR, 3), unit = "A" }))
 end
 
 local function energy_handler(driver, device, value, zb_rx)
+  if probe_metering(driver, device, value.value) then return end
   device:emit_event(capabilities.energyMeter.energy({ value = round(value.value / ENERGY_DIVISOR, 2), unit = "kWh" }))
 end
 
@@ -226,6 +269,16 @@ local function configure_plug(driver, device)
   device:send(ElectricalMeasurement.attributes.RMSCurrent:configure_reporting(device, 5, 3600, 50))
   device:send(ElectricalMeasurement.attributes.ActivePower:configure_reporting(device, 5, 3600, 10))
   plug_refresh(device)
+end
+
+enable_metering = function(driver, device)
+  if device:get_field(METERING_DETECTED) then return end
+  log.info(tostring(device.label) .. " : mesure de consommation detectee, passage au profil avec consommation")
+  device:set_field(METERING_DETECTED, true, { persist = true })
+  device:try_update_metadata({ profile = "plug-power-energy" })
+  configure_plug(driver, device)
+  start_polling(device)
+  start_energy_reports(device)
 end
 
 local function configure_basic_plug(driver, device)
@@ -544,6 +597,8 @@ end
 -- Driver
 ---------------------------------------------------------------------------
 local driver_template = {
+  -- Ancienne surveillance des attributs, depreciee par le SDK (avertissement toutes les 30 s)
+  health_check = false,
   supported_capabilities = {
     capabilities.switch,
     capabilities.powerMeter,
