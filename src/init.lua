@@ -279,24 +279,51 @@ local function hold_unconfirmed_zero(device, field, value, read_attribute)
   return true
 end
 
+-- Au moins une valeur par heure dans l'app : une valeur identique a la precedente
+-- n'est pas enregistree par SmartThings (graphique « aucune donnee »), on la force
+-- (state_change) au plus une fois par heure. La relecture periodique de la prise
+-- (300 s par defaut, 3600 s max) garantit qu'un message arrive dans l'heure.
+local HOURLY_S = 3600
+local function emit_hourly(device, name, value, make_event)
+  local key_v, key_t = "hourly_" .. name .. "_value", "hourly_" .. name .. "_time"
+  local now = os.time()
+  if device:get_field(key_v) == value then
+    if now - (device:get_field(key_t) or 0) < HOURLY_S then return end
+    device:set_field(key_t, now)
+    device:emit_event(make_event({ state_change = true }))
+    return
+  end
+  device:set_field(key_v, value)
+  device:set_field(key_t, now)
+  device:emit_event(make_event(nil))
+end
+
 local function active_power_handler(driver, device, value, zb_rx)
   if probe_metering(driver, device, value.value) then return end
   local w = scale(device, POWER_MULT, POWER_DIV, value.value)
   if w < 0 then w = 0 end
   if hold_unconfirmed_zero(device, "zero_power_seen", w, ElectricalMeasurement.attributes.ActivePower) then return end
-  device:emit_event(capabilities.powerMeter.power({ value = round(w, 1), unit = "W" }))
+  w = round(w, 1)
+  emit_hourly(device, "power", w, function(opts)
+    return capabilities.powerMeter.power({ value = w, unit = "W" }, opts)
+  end)
 end
 
 local function voltage_handler(driver, device, value, zb_rx)
   if not is_metered_plug(device) then return end
-  local v = scale(device, VOLT_MULT, VOLT_DIV, value.value)
-  device:emit_event(capabilities.voltageMeasurement.voltage({ value = round(v, 1), unit = "V" }))
+  local v = round(scale(device, VOLT_MULT, VOLT_DIV, value.value), 1)
+  emit_hourly(device, "voltage", v, function(opts)
+    return capabilities.voltageMeasurement.voltage({ value = v, unit = "V" }, opts)
+  end)
 end
 
 local function current_handler(driver, device, value, zb_rx)
   if not is_metered_plug(device) then return end
   if hold_unconfirmed_zero(device, "zero_current_seen", value.value, ElectricalMeasurement.attributes.RMSCurrent) then return end
-  device:emit_event(capabilities.currentMeasurement.current({ value = round(value.value / CURRENT_DIVISOR, 3), unit = "A" }))
+  local a = round(value.value / CURRENT_DIVISOR, 3)
+  emit_hourly(device, "current", a, function(opts)
+    return capabilities.currentMeasurement.current({ value = a, unit = "A" }, opts)
+  end)
 end
 
 local function energy_handler(driver, device, value, zb_rx)
