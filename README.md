@@ -21,7 +21,7 @@ Un seul driver SmartThings Edge, open source (Apache-2.0), pour :
 - **ZG-227Z** : lit le canal Tuya 0xEF00 (DP 1 = température ÷10, DP 2 = humidité, DP 4 = batterie), avec repli sur les clusters standard. Corrections de température et d'humidité, intervalle d'envoi réglable (5 à 60 min, appliqué au réveil du capteur).
 - Échelles et datapoints repris de [Zigbee2MQTT](https://github.com/Koenkk/zigbee-herdsman-converters).
 - **Firmware** : chaque appareil Tuya affiche sa version de firmware dans l'app (capability `firmwareUpdate`). À la configuration, le driver envoie un `ImageNotify`, comme les drivers officiels : l'appareil demande alors une mise à jour à la Station, qui ne propose que les firmwares déposés chez Samsung. Aucun firmware Tuya ni BSEED n'est publié, ni chez Samsung ni dans l'index OTA de Zigbee2MQTT.
-- **Icônes** : catégories identiques aux drivers officiels (SmartPlug, LightSensor, TempHumiditySensor, Light).
+- **Icônes et pages de l'app** : la catégorie choisit l'icône, et aussi (comportement non documenté de l'app) une page spéciale avec graphiques. Testé : `PowerMeasurementSensor` (prise avec mesure) donne un wattmètre avec graphique 24 h et la tension en graphique ; `LightSensor` et `TempHumiditySensor` donnent des graphiques de lux, température et humidité. Le signal Zigbee s'affiche en barres en haut de ces pages. Autres catégories : SmartPlug (prise sans mesure), Light (ruban LED).
 
 Pour ajouter un appareil Tuya : ajoute son empreinte dans `fingerprints.yml` et, si besoin, ses datapoints dans `handle_tuya_dp` (`src/init.lua`).
 

@@ -21,7 +21,7 @@ components:
       - id: signalStrength
         version: 1
     categories:
-      - name: SmartPlug
+      - name: PowerMeasurementSensor
 metadata:
   mnmn: SmartThingsCommunity
   vid: 14580b5c-43f3-3d6c-8ac1-61e89bd8591b
