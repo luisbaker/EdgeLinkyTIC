@@ -1,0 +1,15 @@
+{
+  "name": "linky-enedis-graph",
+  "components": [
+    {
+      "id": "main",
+      "capabilities": [
+        { "id": "powerMeter", "version": 1 },
+        { "id": "energyMeter", "version": 1 },
+        { "id": "smoothcommon59531.enedisConso", "version": 1 }
+      ],
+      "categories": [ { "name": "PowerMeasurementSensor" } ]
+    }
+  ],
+  "metadata": { "mnmn": "SmartThingsCommunity" }
+}
