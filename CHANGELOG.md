@@ -2,6 +2,13 @@
 
 ## Non publié
 
+### Robustesse (Yeelight et capteurs sur pile)
+- Yeelight : si une ampoule ne répond plus à son adresse (bail DHCP expiré), le driver relance lui-même une recherche multicast après 2 échecs de connexion, puis toutes les 5 minutes tant qu'une ampoule est hors ligne. Plus besoin de relancer « Rechercher » dans l'app.
+- Yeelight : une ampoule coupée au mur passe hors ligne en ~10 s (keepalive avec délai de réponse) au lieu d'attendre 90 s sans réaction.
+- Capteurs sur pile (TS0222, ZG-227Z) : lecture de la batterie (pourcentage et tension) à chaque réveil du capteur, au plus une fois par 6 h. Le TS0222 n'envoyait jamais sa batterie spontanément.
+- Batterie : la tension sert de repli quand le pourcentage n'est pas fourni (3,0 V = 100 %, 2,2 V = 0 %) ; un premier « 0 % » sans tension connue est ignoré (certains Tuya répondent 0 au lieu de « inconnu »).
+- Tous les fichiers Lua sont désormais vérifiés avec `luac -p` avant publication.
+
 ### Signal Zigbee sur tous les appareils
 - Qualité du signal (LQI, RSSI, capacité `signalStrength`) sur tous les appareils Tuya, publiée à partir de n'importe quel message reçu, au plus toutes les 5 minutes (comme le ZLinky).
 - Prise TS011F : les sections Aujourd'hui / Cette semaine / Ce mois-ci ont été retirées de la page.

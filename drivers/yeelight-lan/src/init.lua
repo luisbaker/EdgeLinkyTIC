@@ -20,7 +20,13 @@ local SSDP_PORT = 1982
 local CONTROL_PORT = 55443
 local DISCOVERY_WINDOW_S = 3
 local RECEIVE_TIMEOUT_S = 90   -- sans nouvelles pendant 90 s : on verifie la connexion
+local KEEPALIVE_REPLY_S = 10   -- delai de reponse au get_prop de verification, sinon hors ligne
 local CT_MIN, CT_MAX = 1700, 6500
+
+-- Definis plus bas (dependances croisees entre connexion et decouverte)
+local connect, disconnect, search_once
+-- Le driver lui-meme, memorise au demarrage (pour la decouverte lancee depuis une connexion)
+local the_driver
 
 -- Champs memorises sur chaque appareil
 local F_IP = "ip"
@@ -101,8 +107,6 @@ local PROP_NAMES = { "power", "bright", "ct", "rgb", "hue", "sat", "color_mode" 
 ---------------------------------------------------------------------------
 -- Connexion TCP (une par ampoule) et envoi des commandes
 ---------------------------------------------------------------------------
-local connect -- defini plus bas
-
 local function send(device, method, params)
   local conn = connections[device.id]
   if conn == nil or conn.sock == nil then
@@ -147,14 +151,27 @@ local function handle_line(device, line)
   end
 end
 
+-- Boucle de reception. Une ampoule eteinte au mur ne ferme pas la connexion TCP :
+-- sans nouvelles pendant RECEIVE_TIMEOUT_S, on envoie un get_prop et on exige une
+-- reponse sous KEEPALIVE_REPLY_S, sinon l'ampoule est declaree hors ligne.
 local function receive_loop(device, conn, sock)
+  local awaiting_reply = false
   while connections[device.id] == conn and conn.sock == sock do
     local line, err = sock:receive("*l")
     if line then
+      awaiting_reply = false
+      sock:settimeout(RECEIVE_TIMEOUT_S)
       handle_line(device, line)
     elseif err == "timeout" then
-      request_state(device) -- verifie que la connexion est vivante
-    else
+      if awaiting_reply then
+        err = "pas de reponse au keepalive"
+      else
+        awaiting_reply = true
+        sock:settimeout(KEEPALIVE_REPLY_S)
+        request_state(device)
+      end
+    end
+    if err and err ~= "timeout" then
       log.warn(string.format("[%s] connexion perdue (%s)", device.label, tostring(err)))
       if conn.sock == sock then
         sock:close()
@@ -167,10 +184,15 @@ local function receive_loop(device, conn, sock)
   end
 end
 
+-- Apres plusieurs echecs de connexion, l'ampoule a peut-etre change d'adresse IP
+-- (bail DHCP). On relance une recherche multicast : si elle repond avec une autre
+-- adresse, search_once la met a jour et relance la connexion.
+local REDISCOVER_AFTER_FAILURES = 2
+
 connect = function(device)
   local conn = connections[device.id]
   if conn == nil then
-    conn = { next_id = 0, pending_get = {}, backoff = 5 }
+    conn = { next_id = 0, pending_get = {}, backoff = 5, failures = 0 }
     connections[device.id] = conn
   end
   if conn.sock ~= nil or conn.connecting then return end
@@ -180,34 +202,46 @@ connect = function(device)
     while connections[device.id] == conn and conn.sock == nil do
       local ip = device_ip(device)
       if ip == nil then
-        log.warn(string.format("[%s] adresse IP inconnue : relance une recherche d'appareils ou remplis le reglage IP", device.label))
+        log.warn(string.format("[%s] adresse IP inconnue : recherche sur le reseau", device.label))
         device:offline()
-        break
+        search_once(the_driver)
+        if device_ip(device) == nil then
+          socket.sleep(conn.backoff)
+          conn.backoff = math.min(conn.backoff * 2, 300)
+        end
+      else
+        local sock = socket.tcp()
+        sock:settimeout(5)
+        local ok, err = sock:connect(ip, CONTROL_PORT)
+        if ok then
+          sock:settimeout(RECEIVE_TIMEOUT_S)
+          conn.sock = sock
+          conn.backoff = 5
+          conn.failures = 0
+          log.info(string.format("[%s] connecte a %s:%d", device.label, ip, CONTROL_PORT))
+          device:online()
+          request_state(device)
+          cosock.spawn(function() receive_loop(device, conn, sock) end, "yeelight-recv-" .. device.id)
+          break
+        end
+        sock:close()
+        conn.failures = conn.failures + 1
+        log.warn(string.format("[%s] connexion a %s impossible (%s), nouvel essai dans %d s", device.label, ip, tostring(err), conn.backoff))
+        device:offline()
+        if conn.failures >= REDISCOVER_AFTER_FAILURES and not (device.preferences and device.preferences.ipAddress ~= "") then
+          log.info(string.format("[%s] l'ampoule a peut-etre change d'adresse : recherche sur le reseau", device.label))
+          search_once(the_driver)
+          if connections[device.id] ~= conn then return end -- search_once a relance une connexion avec la nouvelle IP
+        end
+        socket.sleep(conn.backoff)
+        conn.backoff = math.min(conn.backoff * 2, 300)
       end
-      local sock = socket.tcp()
-      sock:settimeout(5)
-      local ok, err = sock:connect(ip, CONTROL_PORT)
-      if ok then
-        sock:settimeout(RECEIVE_TIMEOUT_S)
-        conn.sock = sock
-        conn.backoff = 5
-        log.info(string.format("[%s] connecte a %s:%d", device.label, ip, CONTROL_PORT))
-        device:online()
-        request_state(device)
-        cosock.spawn(function() receive_loop(device, conn, sock) end, "yeelight-recv-" .. device.id)
-        break
-      end
-      sock:close()
-      log.warn(string.format("[%s] connexion a %s impossible (%s), nouvel essai dans %d s", device.label, ip, tostring(err), conn.backoff))
-      device:offline()
-      socket.sleep(conn.backoff)
-      conn.backoff = math.min(conn.backoff * 2, 300)
     end
     conn.connecting = false
   end, "yeelight-connect-" .. device.id)
 end
 
-local function disconnect(device)
+disconnect = function(device)
   local conn = connections[device.id]
   connections[device.id] = nil
   if conn and conn.sock then conn.sock:close() end
@@ -297,7 +331,7 @@ local function known_device(driver, dni)
   return nil
 end
 
-local function search_once(driver)
+search_once = function(driver)
   local udp = socket.udp()
   udp:setsockname("*", 0)
   udp:settimeout(DISCOVERY_WINDOW_S)
@@ -389,6 +423,20 @@ local function info_changed(driver, device, event, args)
   end
 end
 
+-- Verification periodique : une ampoule hors ligne dont l'IP a change est
+-- retrouvee par la decouverte meme sans action dans l'app.
+local RECHECK_S = 300
+local function start_periodic_rediscovery(driver)
+  driver:call_on_schedule(RECHECK_S, function()
+    local offline = false
+    for _, d in ipairs(driver:get_devices()) do
+      local conn = connections[d.id]
+      if conn == nil or conn.sock == nil then offline = true end
+    end
+    if offline then search_once(driver) end
+  end, "yeelight-rediscover")
+end
+
 local driver = Driver("yeelight-lan-luis", {
   discovery = discovery,
   lifecycle_handlers = {
@@ -419,4 +467,6 @@ local driver = Driver("yeelight-lan-luis", {
   },
 })
 
+the_driver = driver
+start_periodic_rediscovery(driver)
 driver:run()

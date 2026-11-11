@@ -534,8 +534,22 @@ local function emit_lux(device, lux)
   device:emit_event(capabilities.illuminanceMeasurement.illuminance({ value = lux, unit = "lux" }))
 end
 
+-- Les capteurs sur pile n'envoient pas spontanement leur batterie (le TS0222 ne
+-- l'a jamais envoyee). A chaque message recu, l'appareil est reveille : on en
+-- profite pour la lire, au plus une fois par 6 h.
+local LAST_BATTERY_READ = "last_battery_read"
+local BATTERY_READ_S = 6 * 3600
+local function read_battery_when_awake(device)
+  local now = os.time()
+  if now - (device:get_field(LAST_BATTERY_READ) or 0) < BATTERY_READ_S then return end
+  device:set_field(LAST_BATTERY_READ, now, { persist = true })
+  device:send(PowerConfiguration.attributes.BatteryPercentageRemaining:read(device))
+  device:send(PowerConfiguration.attributes.BatteryVoltage:read(device))
+end
+
 -- Cluster standard 0x0400 (ignore pendant 10 min apres une mesure du canal Tuya)
 local function lux_handler(driver, device, value, zb_rx)
+  read_battery_when_awake(device)
   if tuya_recent(device, USES_TUYA_LUX) then return end
   local raw = value.value
   if raw == 0xFFFF then return end -- valeur invalide
@@ -553,6 +567,9 @@ local function configure_lux(driver, device)
   bind(driver, device, PowerConfiguration.ID)
   device:send(Illuminance.attributes.MeasuredValue:configure_reporting(device, pref(device, "luxMinInterval", 60), 3600, 500))
   device:send(PowerConfiguration.attributes.BatteryPercentageRemaining:configure_reporting(device, 3600, 21600, 1))
+  device:send(PowerConfiguration.attributes.BatteryVoltage:configure_reporting(device, 3600, 21600, 1))
+  device:set_field(LAST_BATTERY_READ, nil)
+  read_battery_when_awake(device)
 end
 
 ---------------------------------------------------------------------------
@@ -586,6 +603,7 @@ end
 -- SmartThings (zigbee-humidity-sensor). Le canal Tuya ne fait que s'y ajouter.
 local function temp_handler(driver, device, value, zb_rx)
   maybe_reconfigure(driver, device)
+  read_battery_when_awake(device)
   local raw = value.value
   if raw == -32768 then return end -- 0x8000 = valeur invalide
   emit_temperature(device, raw / (tonumber(pref(device, "tempDivisor", "100")) or 100))
@@ -683,19 +701,23 @@ end
 ---------------------------------------------------------------------------
 -- Batterie (cluster standard)
 ---------------------------------------------------------------------------
+-- Pourcentage (0-200 = 0-100 %). 0xFF = inconnu. Un 0 % juste apres une
+-- tension plausible est ignore : certains Tuya repondent 0 au lieu de 0xFF.
 local function battery_pct_handler(driver, device, value, zb_rx)
   maybe_reconfigure(driver, device)
   if value.value == 0xFF then return end
+  if value.value == 0 and device:get_field(HAS_BATTERY_PCT) == nil then return end
   device:set_field(HAS_BATTERY_PCT, true, { persist = true })
   emit_battery(device, value.value / 2)
 end
 
+-- Tension en dixiemes de volt. Repli quand le pourcentage n'est pas fourni :
+-- 2 piles AAA ou CR2032/CR2450 -> 3,0 V pleine, ~2,2 V vide.
 local function battery_voltage_handler(driver, device, value, zb_rx)
-  -- Utilise seulement si l'appareil n'envoie pas de pourcentage.
   if device:get_field(HAS_BATTERY_PCT) then return end
   if value.value == 0xFF or value.value == 0 then return end
   local volts = value.value / 10
-  emit_battery(device, (volts - 2.1) / (3.0 - 2.1) * 100)
+  emit_battery(device, (volts - 2.2) / (3.0 - 2.2) * 100)
 end
 
 ---------------------------------------------------------------------------
