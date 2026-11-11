@@ -1,5 +1,5 @@
 {
-  "name": "linky-enedis",
+  "name": "linky-enedis-v2",
   "components": [
     {
       "id": "main",
@@ -7,7 +7,7 @@
         { "id": "smoothcommon59531.enedisConso", "version": 1 },
         { "id": "energyMeter", "version": 1 }
       ],
-      "categories": [ { "name": "CurbPowerMeter" } ]
+      "categories": [ { "name": "Others" } ]
     }
   ],
   "metadata": { "mnmn": "SmartThingsCommunity" }
