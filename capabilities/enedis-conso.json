@@ -1,0 +1,11 @@
+{
+  "name": "Enedis Conso",
+  "attributes": {
+    "hier": { "schema": {"type":"object","properties":{"value":{"type":"number","minimum":0},"unit":{"type":"string","enum":["kWh"],"default":"kWh"}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] },
+    "septJours": { "schema": {"type":"object","properties":{"value":{"type":"number","minimum":0},"unit":{"type":"string","enum":["kWh"],"default":"kWh"}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] },
+    "moisEnCours": { "schema": {"type":"object","properties":{"value":{"type":"number","minimum":0},"unit":{"type":"string","enum":["kWh"],"default":"kWh"}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] },
+    "puissanceMaxHier": { "schema": {"type":"object","properties":{"value":{"type":"number","minimum":0},"unit":{"type":"string","enum":["VA"],"default":"VA"}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] },
+    "dateDonnees": { "schema": {"type":"object","properties":{"value":{"type":"string","maxLength":32}},"additionalProperties":false,"required":["value"]}, "enumCommands": [] }
+  },
+  "commands": {}
+}

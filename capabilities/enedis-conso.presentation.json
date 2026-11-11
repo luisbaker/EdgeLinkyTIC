@@ -1,0 +1,18 @@
+{
+  "dashboard": { "states": [ { "label": "Hier {{hier.value}} kWh" } ], "actions": [] },
+  "detailView": [
+    { "label": "Consommation d'hier", "displayType": "state", "state": { "label": "{{hier.value}} kWh" } },
+    { "label": "7 derniers jours", "displayType": "state", "state": { "label": "{{septJours.value}} kWh" } },
+    { "label": "Mois en cours", "displayType": "state", "state": { "label": "{{moisEnCours.value}} kWh" } },
+    { "label": "Puissance max d'hier", "displayType": "state", "state": { "label": "{{puissanceMaxHier.value}} VA" } },
+    { "label": "Données du", "displayType": "state", "state": { "label": "{{dateDonnees.value}}" } }
+  ],
+  "automation": {
+    "conditions": [
+      { "label": "Consommation d'hier", "displayType": "numberField", "numberField": { "value": "hier.value", "valueType": "number", "unit": "kWh" } }
+    ],
+    "actions": []
+  },
+  "id": "smoothcommon59531.enedisConso",
+  "version": 1
+}

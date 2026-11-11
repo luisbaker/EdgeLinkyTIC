@@ -107,6 +107,16 @@ Le SDK ne permet pas de dessiner ses propres graphiques : les [types d'affichage
 
 La tuile de la prise avec mesure affiche les **watts** grâce à une présentation personnalisée (`presentation/plug.json`).
 
+## Consommation Enedis (sans ZLinky)
+
+Sans module ZLinky, la consommation du Linky peut venir d'Enedis, avec un jour de décalage (J-1), via la passerelle [MyElectricalData](https://www.myelectricaldata.fr/) :
+
+- un **appareil virtuel** SmartThings « Linky (Enedis) » (profil `tools/enedis/profil-linky-enedis.json`, capacité `smoothcommon59531.enedisConso`) affiche la consommation d'hier, des 7 derniers jours, du mois en cours, la puissance max d'hier et la date des données ;
+- le script `tools/enedis/enedis-sync.ps1`, lancé une fois par jour (par exemple par le Planificateur de tâches Windows, le matin), lit les données et les envoie à l'appareil avec la SmartThings CLI ;
+- la **clé MyElectricalData et le numéro de compteur ne sont jamais dans le dépôt** : ils sont dans `%APPDATA%\linky-enedis\config.json`, avec l'identifiant de l'appareil virtuel.
+
+Ce n'est ni local ni en temps réel (Enedis publie à J-1). Pour du temps réel en local, utiliser un ZLinky.
+
 ## Module ZLinky TIC (compteur Linky)
 
 Sous-driver (`src/zlinky/`) pour le module Zigbee [ZLinky TIC de LiXee](https://lixee.fr/), qui lit la téléinformation (TIC) d'un compteur Linky. Il ne s'active que pour les appareils LiXee `ZLinky_TIC`.
